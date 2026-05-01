@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Email Assistant",
+  "version": "0.1.0",
+  "description": "Local-first email drafting assistant for Gmail and Outlook Web.",
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://mail.google.com/*",
+    "https://outlook.live.com/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "48": "icon-48.png"
+    },
+    "default_title": "Email Assistant"
+  },
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["src/content-gmail.ts"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://outlook.live.com/mail/*"],
+      "js": ["src/content-outlook.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "settings.html"
+}

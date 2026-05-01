@@ -1,0 +1,182 @@
+:root {
+  color: #1f1611;
+  font-family: 'Aptos', 'Segoe UI Variable Text', 'Trebuchet MS', sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(200, 127, 74, 0.25), transparent 28%),
+    linear-gradient(180deg, #fffaf3, #f1e4d5);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+code {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+
+.settings-shell {
+  box-sizing: border-box;
+  display: grid;
+  gap: 24px;
+  margin: 0 auto;
+  max-width: 920px;
+  padding: 40px 24px 64px;
+}
+
+.settings-hero,
+.settings-card {
+  border: 1px solid rgba(95, 58, 39, 0.14);
+  border-radius: 24px;
+  box-shadow: 0 18px 40px rgba(72, 44, 31, 0.12);
+  background: rgba(255, 250, 242, 0.9);
+}
+
+.settings-hero {
+  padding: 28px;
+}
+
+.settings-card {
+  display: grid;
+  gap: 18px;
+  padding: 28px;
+}
+
+.settings-kicker,
+.settings-copy,
+.settings-status,
+.settings-defaults dt {
+  color: #664c40;
+}
+
+.settings-kicker {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
+.settings-hero h1 {
+  font-size: clamp(30px, 5vw, 48px);
+  line-height: 1.05;
+  margin: 0 0 12px;
+  max-width: 12ch;
+}
+
+.settings-copy {
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 64ch;
+}
+
+.settings-defaults {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin: 24px 0 0;
+}
+
+.settings-defaults div {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 16px;
+}
+
+.settings-defaults dt,
+.settings-defaults dd,
+.settings-card label span,
+.settings-status {
+  margin: 0;
+}
+
+.settings-defaults dd {
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.settings-card label {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-card input,
+.settings-card select,
+.settings-card textarea,
+.settings-card button {
+  font: inherit;
+}
+
+.settings-card input,
+.settings-card select,
+.settings-card textarea {
+  border: 1px solid rgba(95, 58, 39, 0.16);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.settings-presets {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.settings-card textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.settings-note {
+  color: #664c40;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.settings-actions button {
+  border: 1px solid rgba(95, 58, 39, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #261912;
+  cursor: pointer;
+  padding: 12px 18px;
+}
+
+.settings-actions button:not(.primary) {
+  min-width: 160px;
+}
+
+.settings-actions .primary {
+  background: linear-gradient(135deg, #1e2f30, #314d4f);
+  border-color: transparent;
+  color: #fff7ef;
+}
+
+.settings-status {
+  min-height: 20px;
+}
+
+@media (max-width: 640px) {
+  .settings-shell {
+    padding-inline: 16px;
+  }
+
+  .settings-card,
+  .settings-hero {
+    border-radius: 20px;
+    padding: 20px;
+  }
+
+  .settings-actions button {
+    width: 100%;
+  }
+}

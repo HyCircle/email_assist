@@ -61,10 +61,19 @@ Every code change should improve the speed, clarity, or reliability of this loop
 - `background.ts`: extension lifecycle, storage access, and request coordination only
 - `prompt.ts`: prompt assembly only
 - `llm.ts`: HTTP client only
-- `storage.ts`: settings persistence only
+- `storage.ts`: settings persistence and import/export normalization only
+- `settings.ts`: settings page behavior only
+- `settings.css`: settings page styling only
+- `icon.svg`: extension icon and in-page trigger icon only
 - `types.ts`: shared types only
 
 If a file starts doing two jobs, split it by responsibility, not by pattern.
+
+## Documentation Rules
+
+- Keep `README.md` user-facing: what the extension does, how to build it, how to load it, and how to configure it.
+- Keep architecture rules, anti-goals, milestones, and implementation guidance in `AGENTS.md`.
+- If README starts reading like an internal design memo, move that content here.
 
 ## State Rules
 
@@ -93,11 +102,23 @@ If a file starts doing two jobs, split it by responsibility, not by pattern.
 - Never send email automatically.
 - Never send thread content anywhere except the user-configured LLM endpoint.
 
+## Settings Rules
+
+- Runtime settings live in `chrome.storage.sync`.
+- `.env.local` is only for build-time defaults and should never be required for end users of a built extension.
+- Keep settings import/export versioned and backward-compatible with plain settings JSON when practical.
+- Request endpoint permission during save or import before relying on the imported endpoint.
+
+## Asset Rules
+
+- Keep a single source icon asset and reuse it for the extension manifest and the in-page trigger.
+- Do not introduce duplicate icon variants unless browser compatibility or a concrete UX need requires them.
+
 ## Simplicity Rules
 
 - Favor plain functions over classes.
 - Favor explicit parameters over hidden global state.
-- Keep settings minimal: endpoint, model, temperature, and user style notes.
+- Keep settings limited to concrete user needs such as endpoint, model, temperature, language, presets, sign-offs, signature, style notes, API key, and transfer helpers.
 - Keep prompt logic in code until prompt iteration becomes painful.
 - Add comments only for genuinely tricky DOM behavior.
 

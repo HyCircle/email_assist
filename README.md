@@ -1,198 +1,76 @@
 # Email Assistant
 
-Local-first Chrome extension for drafting and refining emails inside Gmail and Outlook Web.
+Email Assistant is a small Chrome extension for drafting and refining emails inside Gmail and Outlook Web.
 
-## What It Is
+It stays inside the existing compose experience: you open a compose or reply box, click the assistant icon, enter an instruction, review the result, and then insert or copy it yourself.
 
-Email Assistant adds a small assistant surface to webmail compose and reply flows.
+## Features
 
-The page already provides the main UI. The extension only adds the missing pieces:
+- Gmail and Outlook Web support
+- Generate and refine flows for the current compose surface
+- New-mail subject suggestions when the subject is empty
+- Plain-text insertion and clipboard copy
+- Runtime settings stored in Chrome sync storage
+- Export and import for extension settings
+- Optional build-time defaults through `.env.local`
 
-- an assistant trigger near compose or reply
-- a small prompt or refine input
-- a result area for generated text
-- a settings page for endpoint and model configuration
+## How It Works
 
-The assistant reads the current open thread from the page, accepts a short instruction, calls a configured LLM endpoint, and returns a draft that the user can insert or copy.
-
-The assistant never sends email automatically.
-
-## Product Principles
-
-- Human in the loop at all times
-- Thread-aware, not inbox-aware
-- Local-first by default
-- Minimal UI on top of existing webmail
-- Readability over architecture
-
-## Primary User Flow
-
-1. Open a thread in Gmail or Outlook Web.
-2. Open a reply or compose surface.
-3. Click the assistant button.
-4. Enter a short instruction such as `reply politely and propose Friday` or `rewrite shorter and firmer`.
-5. Review the generated result.
+1. Open Gmail or Outlook Web.
+2. Start a new message or reply.
+3. Click the assistant icon next to the compose controls.
+4. Enter an instruction such as `reply politely and propose Friday`.
+5. Review the generated draft.
 6. Insert it into the compose box or copy it.
 
-## Supported Providers
+The extension never sends email automatically.
 
-- Gmail web
-- Outlook Web
+## Configuration
 
-Provider support is DOM-based in v1. The extension reads the currently open thread from the page and writes back into the current compose surface only when the user explicitly asks for insertion.
+There are two configuration layers:
 
-## Scope For V1
+- Runtime settings: saved by the extension in `chrome.storage.sync` through the Settings page.
+- Build-time defaults: optional values loaded from `.env.local` when you build the extension from source.
 
-- Gmail and Outlook Web only
-- Current open thread only
-- Reply, compose assist, and rewrite
-- Manual trigger only
-- Manual insert or copy only
-- Configurable local or remote LLM endpoint
-- Plain text output first
-- Minimal settings page
+Runtime settings include the endpoint, model, temperature, language, presets, sign-off options, signature block, style notes, and API key. They can be exported to a JSON file and imported on another machine.
 
-## Non-Goals For V1
+If you are sharing a built extension with someone else, they do not need a `.env.local` file. They can install the extension and configure everything from the Settings page.
 
-- Mailbox-wide search
-- Gmail API integration
-- Outlook API integration
-- OAuth login flow
-- Auto-send
-- Streaming token output
-- Multi-profile identity management
-- Provider plugin system
-- Agent frameworks or orchestration runtimes
+If you are building from source and want prefilled defaults, copy `.env.example` to `.env.local` and edit it.
 
-## UI Approach
+## Development
 
-This project should not build a full custom app inside the browser.
-
-The webmail page is the main product surface. The extension should add only:
-
-- a compact entry point near reply or compose
-- a lightweight panel or drawer for prompt and result
-- a settings page for endpoint, model, temperature, and user style notes
-
-Keep the UI small enough that it feels like a writing tool, not a second mailbox.
-
-## Privacy Model
-
-- The extension should send data only to the LLM endpoint configured by the user.
-- Local LLM endpoints are the default and recommended setup.
-- Thread content is taken from the current page, not from mailbox APIs.
-- The extension should request the smallest possible permissions.
-- Model output should be inserted as plain text by default.
-
-## State Model
-
-This product is a simple UI workflow, not an agent workflow.
-
-Use explicit local state such as:
-
-- `idle`
-- `ready`
-- `loading`
-- `showing-result`
-- `error`
-
-If refinement is supported, treat it as another user-triggered request over the current draft.
-
-Do not use LangGraph for v1.
-
-## Architecture Shape
-
-Use Manifest V3 and keep the codebase small.
-
-- `content-gmail.ts`: Gmail DOM integration only
-- `content-outlook.ts`: Outlook Web DOM integration only
-- `gmail-dom.ts`: Gmail selectors and thread extraction helpers
-- `outlook-dom.ts`: Outlook selectors and thread extraction helpers
-- `panel.ts`: injected panel behavior only
-- `panel.css`: panel styling only
-- `background.ts`: storage access, request coordination, and extension lifecycle
-- `prompt.ts`: prompt assembly only
-- `llm.ts`: LLM HTTP client only
-- `storage.ts`: settings persistence only
-- `types.ts`: shared types only
-- `constants.ts`: fixed defaults only
-
-Two providers justify two DOM modules. They do not justify a generic provider framework.
-
-## Suggested Repo Layout
-
-```text
-.
-|- AGENTS.md
-|- README.md
-|- manifest.json
-|- package.json
-|- tsconfig.json
-|- vite.config.ts
-|- src/
-|  |- background.ts
-|  |- content-gmail.ts
-|  |- content-outlook.ts
-|  |- gmail-dom.ts
-|  |- outlook-dom.ts
-|  |- panel.ts
-|  |- panel.css
-|  |- prompt.ts
-|  |- llm.ts
-|  |- storage.ts
-|  |- types.ts
-|  |- constants.ts
-|- tests/
-|  |- prompt.test.ts
-|  |- gmail-dom.test.ts
-|  |- outlook-dom.test.ts
+```bash
+npm install
+npm run lint
+npm run test
+npm run build
 ```
 
-## Recommended Stack
+## Load The Unpacked Extension
 
-- TypeScript
-- Vite
-- `@crxjs/vite-plugin`
-- Vitest
-- Plain DOM APIs first
+1. Run `npm run build`.
+2. Open `chrome://extensions`.
+3. Enable Developer mode.
+4. Click Load unpacked.
+5. Select the `dist/` directory.
 
-React is optional, not the default.
+## Permissions
 
-## Provider Rules
+- Gmail and Outlook Web access is declared up front.
+- `localhost` and `127.0.0.1` are predeclared for local-first LLM usage.
+- Other LLM endpoints are requested as optional host permissions when saved in Settings.
 
-- Support only the currently open thread.
-- Use stable attributes and structural selectors where possible.
-- Isolate brittle selectors in provider-specific modules.
-- Share code only after thread extraction.
-- If a feature needs Gmail API or Outlook API access, treat it as a later phase.
+## Testing
 
-## Milestones
+- `prompt.test.ts` covers prompt assembly.
+- `gmail-dom.test.ts` and `outlook-dom.test.ts` cover provider DOM helpers.
+- `storage.test.ts` covers settings normalization and import/export payloads.
 
-### Milestone 0
+Manual browser verification is still useful for DOM-sensitive provider changes.
 
-- inject a Gmail assistant trigger
-- extract visible Gmail thread content
-- open a minimal panel
-- send a request to a local LLM endpoint
-- return a usable draft
+## Notes
 
-### Milestone 1
-
-- insert generated text into Gmail compose reliably
-- persist endpoint and basic settings
-- support refine over the current draft
-
-### Milestone 2
-
-- repeat the same flow for Outlook Web
-- add Outlook Web insertion support
-- align shared prompt and storage behavior
-
-### Milestone 3
-
-- add rewrite helpers such as shorten, soften, clarify, and translate
-- improve long-thread extraction where cheap and safe
-
-## Definition Of Done
-
-The project is useful when opening a real email thread, clicking one button, entering one instruction, and getting a usable result is faster than manual copy and paste.
+- The extension currently targets Gmail and Outlook Web only.
+- It works on the currently open thread or compose surface only.
+- Internal architecture and implementation rules live in [AGENTS.md](AGENTS.md).
