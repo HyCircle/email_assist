@@ -26,7 +26,11 @@ function isOpenSettingsRequest(message: unknown): message is OpenSettingsRequest
 
 function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
   const sourceUrl = sender.url ?? '';
-  return sourceUrl.startsWith('https://mail.google.com/') || sourceUrl.startsWith('https://outlook.live.com/mail/');
+  return (
+    sourceUrl.startsWith('https://mail.google.com/') ||
+    sourceUrl.startsWith('https://outlook.live.com/mail/') ||
+    sourceUrl.startsWith('https://outlook.office.com/mail/')
+  );
 }
 
 async function hasEndpointPermission(endpoint: string): Promise<boolean> {
