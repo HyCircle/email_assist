@@ -15,7 +15,8 @@
     "http://127.0.0.1/*",
     "https://mail.google.com/*",
     "https://outlook.live.com/*",
-    "https://outlook.office.com/*"
+    "https://outlook.office.com/*",
+    "https://outlook.cloud.microsoft/mail/*"
   ],
   "optional_host_permissions": [
     "http://*/*",
@@ -40,7 +41,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://outlook.live.com/mail/*", "https://outlook.office.com/mail/*"],
+      "matches": ["https://outlook.live.com/mail/*", "https://outlook.office.com/mail/*", "https://outlook.cloud.microsoft/mail/*"],
       "js": ["src/content-outlook.ts"],
       "run_at": "document_idle"
     }

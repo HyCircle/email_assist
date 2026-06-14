@@ -29,7 +29,8 @@ function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
   return (
     sourceUrl.startsWith('https://mail.google.com/') ||
     sourceUrl.startsWith('https://outlook.live.com/mail/') ||
-    sourceUrl.startsWith('https://outlook.office.com/mail/')
+    sourceUrl.startsWith('https://outlook.office.com/mail/') ||
+    sourceUrl.startsWith('https://outlook.cloud.microsoft/mail/')
   );
 }
 
