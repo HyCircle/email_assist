@@ -78,6 +78,23 @@ describe('outlook-dom', () => {
     expect(context?.participants).not.toContain('email@example.com');
   });
 
+  it('recovers sender and date from Outlook’s inline reply lead-in', () => {
+    installDom(`
+      <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">
+        <span id="CONV_123_SUBJECT">Homework 2</span>
+        <div aria-label="Email message">
+          <div role="document" aria-label="Message body">On Sep 11, 2026, 1:52 PM, Vergara, Mateo &lt;mverg@uic.edu&gt; wrote:\nPlease see the attached work.</div>
+        </div>
+      </div></main>
+    `, 'https://outlook.cloud.microsoft/mail/inbox/id/example');
+
+    const context = extractOutlookCurrentContext(document);
+    expect(context?.messages[0]?.sender).toContain('mverg@uic.edu');
+    expect(context?.messages[0]?.sender).toContain('Vergara, Mateo');
+    expect(context?.messages[0]?.date).toContain('Sep 11, 2026');
+    expect(context?.participants).toContain('mverg@uic.edu');
+  });
+
   it('returns no reading-pane context when message bodies are not structured', () => {
     installDom(`
       <main id="ReadingPaneContainerId">From: chrome@outlook Whole pane dump email@example.com</main>
@@ -135,6 +152,38 @@ describe('outlook-dom', () => {
     expect(context?.participants).toEqual(expect.arrayContaining(['ois@uic.edu', 'yhao24@uic.edu']));
   });
 
+  it('extracts and preserves a quoted reply marker outside the editor', () => {
+    installDom(`
+      <div data-app-section="MailReadCompose">
+        <div aria-label="Message body" contenteditable="true"><div data-email-assist-draft="true">Old draft</div></div>
+        <div id="divRplyFwdMsg">From: ois@uic.edu &lt;ois@uic.edu&gt;<br>Subject: Campus update</div>
+        <div>Original quoted reply body.</div>
+      </div>
+    `, 'https://outlook.live.com/mail/inbox/id/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(getOutlookComposeKind(editor)).toBe('reply');
+    expect(extractOutlookCurrentContext(document, editor)?.messages[0]?.body).toContain('Original quoted reply body');
+    insertPlainTextIntoOutlook(editor, 'New reply.');
+    expect(editor.textContent).toContain('New reply.');
+    expect(editor.textContent).not.toContain('Old draft');
+    expect(document.body.textContent).toContain('Original quoted reply body.');
+  });
+
+  it('preserves a nested Outlook quote inside the editor when replacing the draft', () => {
+    installDom(`
+      <div aria-label="Message body" contenteditable="true">
+        <div class="editor-surface"><div data-email-assist-draft="true">Old draft</div><div id="divRplyFwdMsg">From: ois@uic.edu<br>Subject: Campus update</div><div>Original quoted reply body.</div></div>
+      </div>
+    `, 'https://outlook.live.com/mail/inbox/id/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    insertPlainTextIntoOutlook(editor, 'New reply.');
+    expect(editor.textContent).toContain('New reply.');
+    expect(editor.textContent).toContain('Original quoted reply body.');
+    expect(readPlainTextFromOutlookEditor(editor)).toContain('New reply.');
+  });
+
   it('classifies an Outlook reply from its quoted reply marker', () => {
     installDom(`
       <div data-app-section="MailReadCompose">
@@ -145,6 +194,27 @@ describe('outlook-dom', () => {
 
     const editor = findOutlookComposeEditors(document)[0];
     expect(getOutlookComposeKind(editor)).toBe('reply');
+  });
+
+  it('ignores the compose metadata header before an inline blockquote', () => {
+    installDom(`
+      <div data-app-section="MailReadCompose">
+        <input aria-label="Subject" value="Re: Campus update">
+        <div aria-label="Message body" contenteditable="true">
+          <div>From: me@example.com<br>Subject: Re: Campus update</div>
+          <div>My current reply.</div>
+          <blockquote>On Tuesday, Alice &lt;alice@example.com&gt; wrote:<br>Quoted body.</blockquote>
+        </div>
+      </div>
+    `, 'https://outlook.live.com/mail/inbox/id/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(getOutlookComposeKind(editor)).toBe('reply');
+    expect(extractOutlookCurrentContext(document, editor)?.subject).toBe('Campus update');
+    expect(extractOutlookCurrentContext(document, editor)?.messages[0]?.body).toContain('Quoted body');
+    expect(extractOutlookCurrentContext(document, editor)?.messages[0]?.body).not.toContain('My current reply');
+    expect(readPlainTextFromOutlookEditor(editor)).toContain('My current reply');
+    expect(readPlainTextFromOutlookEditor(editor)).not.toContain('me@example.com');
   });
 
   it('mounts the strip after the Send row, not inside the sticky action bar', () => {

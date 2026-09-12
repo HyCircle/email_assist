@@ -37,5 +37,6 @@ describe('settings contract', () => {
     const parsed = parseSettingsImport(serialized);
     expect(JSON.parse(serialized)).toMatchObject({ version: 2, exportedAt: '2026-05-01T00:00:00.000Z' });
     expect(parsed).toEqual(source);
+    expect(() => parseSettingsImport(serialized.replace('"version": 2', '"version": 99'))).toThrow('Unsupported settings export version');
   });
 });

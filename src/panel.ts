@@ -1,6 +1,10 @@
-import triggerIconUrl from '../icon.svg';
-
-import { EXTENSION_NAME } from './constants';
+import {
+  EXTENSION_NAME,
+  MAX_CONTEXT_ITEM_CHARS,
+  MAX_CONTEXT_ITEMS,
+  MAX_DRAFT_CHARS,
+  MAX_INSTRUCTION_CHARS,
+} from './constants';
 import {
   createDraftSession,
   failDraftRequest,
@@ -44,14 +48,6 @@ function makeId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
-function createTriggerIcon(): HTMLImageElement {
-  const icon = document.createElement('img');
-  icon.src = triggerIconUrl;
-  icon.alt = '';
-  icon.setAttribute('aria-hidden', 'true');
-  return icon;
-}
-
 function contextDisplayLabel(context: ContextItem): string {
   return context.label || (context.kind === 'current-thread' ? 'Current thread' : 'Reference email');
 }
@@ -77,7 +73,33 @@ function field(labelText: string, control: HTMLElement): HTMLLabelElement {
   return label;
 }
 
-function attachRoot(root: HTMLElement, mount: AssistantMount): void {
+function hostTheme(editor: HTMLElement): 'dark' | 'light' {
+  let current: HTMLElement | null = editor;
+  while (current) {
+    const background = window.getComputedStyle(current).backgroundColor;
+    const match = background.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+    if (match && (match[4] === undefined || Number(match[4]) > 0) && Number(match[1]) + Number(match[2]) + Number(match[3]) < 180) {
+      return 'dark';
+    }
+    current = current.parentElement;
+  }
+
+  return 'light';
+}
+
+function positionPopover(root: HTMLElement, anchor: HTMLElement): void {
+  const rect = anchor.getBoundingClientRect();
+  const rootRect = root.getBoundingClientRect();
+  const maxLeft = Math.max(12, window.innerWidth - rootRect.width - 12);
+  const left = Math.min(Math.max(12, rect.left), maxLeft);
+  const below = rect.bottom + 8;
+  const above = rect.top - rootRect.height - 8;
+  const top = below + rootRect.height > window.innerHeight && above >= 12 ? above : below;
+  root.style.top = `${Math.round(top)}px`;
+  root.style.left = `${Math.round(left)}px`;
+}
+
+function attachRoot(root: HTMLElement, mount: AssistantMount): () => void {
   if (mount.kind === 'flow') {
     root.dataset.layout = 'strip';
     if (mount.before && mount.before.parentNode === mount.host) {
@@ -85,14 +107,21 @@ function attachRoot(root: HTMLElement, mount: AssistantMount): void {
     } else {
       mount.host.append(root);
     }
-    return;
+    return () => undefined;
   }
 
   root.dataset.layout = 'popover';
   document.body.append(root);
-  const rect = mount.anchor.getBoundingClientRect();
-  root.style.top = `${Math.round(rect.bottom + 8)}px`;
-  root.style.left = `${Math.round(rect.left)}px`;
+  const reposition = (): void => {
+    positionPopover(root, mount.anchor);
+  };
+  reposition();
+  window.addEventListener('resize', reposition);
+  document.addEventListener('scroll', reposition, true);
+  return () => {
+    window.removeEventListener('resize', reposition);
+    document.removeEventListener('scroll', reposition, true);
+  };
 }
 
 export function attachAssistantPanel(bindings: PanelBindings) {
@@ -111,12 +140,13 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   const root = document.createElement('div');
   root.className = 'ea-root';
   root.dataset.provider = bindings.provider;
+  root.dataset.theme = hostTheme(bindings.editor);
   root.setAttribute('data-email-assist', 'true');
 
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.className = 'ea-trigger';
-  trigger.append(createTriggerIcon(), document.createTextNode('Assist'));
+  trigger.textContent = 'Assist';
   trigger.setAttribute('aria-expanded', 'false');
 
   const triggerRow = document.createElement('div');
@@ -142,6 +172,17 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   contextRow.className = 'ea-context-row';
   contextRow.append(contextChips, addContextButton);
 
+  const settingsButton = document.createElement('button');
+  settingsButton.type = 'button';
+  settingsButton.className = 'ea-icon-button';
+  settingsButton.textContent = '⚙';
+  settingsButton.setAttribute('aria-label', 'Open Email Assistant settings');
+  settingsButton.title = 'Settings';
+
+  const panelHeader = document.createElement('div');
+  panelHeader.className = 'ea-panel-header';
+  panelHeader.append(contextRow, settingsButton);
+
   const contextLabelInput = document.createElement('input');
   contextLabelInput.placeholder = 'Label';
   const contextTextInput = document.createElement('textarea');
@@ -165,6 +206,8 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
   const instructionInput = document.createElement('textarea');
   instructionInput.rows = 3;
+  instructionInput.maxLength = MAX_INSTRUCTION_CHARS;
+  instructionInput.setAttribute('aria-label', 'Writing instruction');
   instructionInput.placeholder = 'Describe the message you want to write…';
   const instructionLabel = field('What should the email say?', instructionInput);
 
@@ -182,11 +225,14 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
   const draftOutput = document.createElement('textarea');
   draftOutput.rows = 8;
+  draftOutput.maxLength = MAX_DRAFT_CHARS;
+  draftOutput.setAttribute('aria-label', 'Draft email');
   draftOutput.placeholder = 'Your draft will appear here.';
   const draftLabel = field('Draft', draftOutput);
   draftLabel.classList.add('ea-draft-field');
 
   const subjectInput = document.createElement('input');
+  subjectInput.setAttribute('aria-label', 'Suggested subject');
   subjectInput.placeholder = 'Suggested subject';
   const subjectLabel = field('Suggested subject', subjectInput);
 
@@ -209,26 +255,30 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   const status = document.createElement('p');
   status.className = 'ea-status';
   status.setAttribute('role', 'status');
-  const settingsButton = document.createElement('button');
-  settingsButton.type = 'button';
-  settingsButton.className = 'ea-link-button';
-  settingsButton.textContent = 'Settings';
   const footer = document.createElement('div');
   footer.className = 'ea-footer';
-  footer.append(status, settingsButton);
+  footer.append(status);
+
+  const promptColumn = document.createElement('div');
+  promptColumn.className = 'ea-prompt-column';
+  promptColumn.append(instructionLabel, draftActions);
+
+  const outputColumn = document.createElement('div');
+  outputColumn.className = 'ea-output-column';
+  outputColumn.append(draftLabel, subjectLabel, reviewActions);
+
+  const panelMain = document.createElement('div');
+  panelMain.className = 'ea-panel-main';
+  panelMain.append(promptColumn, outputColumn);
 
   panel.append(
-    contextRow,
+    panelHeader,
     contextForm,
-    instructionLabel,
-    draftActions,
-    draftLabel,
-    subjectLabel,
-    reviewActions,
+    panelMain,
     footer,
   );
   root.append(triggerRow, panel);
-  attachRoot(root, mount);
+  const detachRoot = attachRoot(root, mount);
 
   function isLoading(): boolean {
     return session.phase === 'drafting' || session.phase === 'improving';
@@ -269,12 +319,14 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   function render(): void {
     const loading = isLoading();
     const hasDraft = Boolean(session.draft.trim());
+    panelMain.dataset.hasDraft = String(hasDraft);
     primaryButton.textContent = getPrimaryActionLabel(session.phase, hasDraft);
     primaryButton.disabled = loading;
     if (draftOutput.value !== session.draft) {
       draftOutput.value = session.draft;
     }
     draftOutput.disabled = loading;
+    outputColumn.hidden = !hasDraft;
     if (subjectInput.value !== session.suggestedSubject) {
       subjectInput.value = session.suggestedSubject;
     }
@@ -286,7 +338,8 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     reviewActions.hidden = !hasDraft;
     presetSelect.disabled = loading;
     instructionInput.disabled = loading;
-    addContextButton.disabled = loading;
+    addContextButton.disabled = loading || session.contexts.length >= MAX_CONTEXT_ITEMS;
+    contextTextInput.maxLength = MAX_CONTEXT_ITEM_CHARS;
     status.textContent = loading ? 'Writing…' : session.error;
     renderContexts();
     renderPresets();
@@ -295,15 +348,22 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   function refreshCurrentContext(): void {
     if (
       bindings.composeKind !== 'reply' ||
-      currentContextDismissed ||
-      session.contexts.some((context) => context.kind === 'current-thread')
+      currentContextDismissed
     ) {
       return;
     }
 
     const currentContext = bindings.getCurrentContext();
     if (currentContext) {
-      session = setSessionContexts(session, [...session.contexts, currentContext]);
+      const currentIndex = session.contexts.findIndex((context) => context.kind === 'current-thread');
+      if (currentIndex < 0) {
+        session = setSessionContexts(session, [...session.contexts, currentContext]);
+      } else if (session.contexts[currentIndex].id !== currentContext.id ||
+        JSON.stringify(session.contexts[currentIndex]) !== JSON.stringify(currentContext)) {
+        const contexts = [...session.contexts];
+        contexts[currentIndex] = currentContext;
+        session = setSessionContexts(session, contexts);
+      }
     }
   }
 
@@ -318,6 +378,12 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     const instruction = instructionInput.value.trim();
     if (!instruction) {
       session = failDraftRequest(session, 'Describe what you want the email to say.');
+      render();
+      instructionInput.focus();
+      return;
+    }
+    if (instruction.length > MAX_INSTRUCTION_CHARS) {
+      session = failDraftRequest(session, `Instruction is limited to ${MAX_INSTRUCTION_CHARS} characters.`);
       render();
       instructionInput.focus();
       return;
@@ -370,12 +436,18 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     panel.hidden = !open;
     trigger.setAttribute('aria-expanded', String(open));
     if (open) {
+      root.dataset.theme = hostTheme(bindings.editor);
       refreshCurrentContext();
       void loadPresets().catch((error: unknown) => {
         status.textContent = error instanceof Error ? error.message : 'Could not load saved instructions.';
       });
       render();
       instructionInput.focus();
+      window.requestAnimationFrame(() => {
+        if (open && mount.kind === 'popover') {
+          positionPopover(root, mount.anchor);
+        }
+      });
     }
   });
 
@@ -397,6 +469,15 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     const text = contextTextInput.value.trim();
     if (!label || !text) {
       status.textContent = 'Add a label and paste the reference email first.';
+      return;
+    }
+
+    if (session.contexts.length >= MAX_CONTEXT_ITEMS) {
+      status.textContent = `You can add up to ${MAX_CONTEXT_ITEMS} context items.`;
+      return;
+    }
+    if (text.length > MAX_CONTEXT_ITEM_CHARS) {
+      status.textContent = `Reference email is limited to ${MAX_CONTEXT_ITEM_CHARS} characters.`;
       return;
     }
 
@@ -464,15 +545,22 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   });
 
   settingsButton.addEventListener('click', () => {
-    void chrome.runtime.sendMessage({ type: 'email-assist:open-settings' }).then((response: OpenSettingsResponse | undefined) => {
-      if (response && !response.ok) {
-        status.textContent = response.error ?? 'Could not open Settings.';
-      }
-    });
+    void chrome.runtime
+      .sendMessage({ type: 'email-assist:open-settings' })
+      .then((response: OpenSettingsResponse | undefined) => {
+        if (response && !response.ok) {
+          status.textContent = response.error ?? 'Could not open Settings.';
+        }
+      })
+      .catch((error: unknown) => {
+        status.textContent = error instanceof Error ? error.message : 'Could not open Settings.';
+      });
   });
 
   const handleStorageChange = (): void => {
-    void loadPresets();
+    void loadPresets().catch((error: unknown) => {
+      status.textContent = error instanceof Error ? error.message : 'Could not load saved instructions.';
+    });
   };
   const handleEscape = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || !open) {
@@ -484,6 +572,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     open = false;
     panel.hidden = true;
     trigger.setAttribute('aria-expanded', 'false');
+    bindings.editor.focus();
   };
 
   chrome.storage.onChanged.addListener(handleStorageChange);
@@ -495,7 +584,11 @@ export function attachAssistantPanel(bindings: PanelBindings) {
       requestSeq += 1;
       chrome.storage.onChanged.removeListener(handleStorageChange);
       document.removeEventListener('keydown', handleEscape, true);
+      detachRoot();
       root.remove();
+    },
+    setComposeKind(composeKind: ComposeKind) {
+      bindings.composeKind = composeKind;
     },
   };
 }

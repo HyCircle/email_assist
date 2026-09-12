@@ -1,4 +1,5 @@
 import { getEndpointOriginPattern, requestDraftFromLlm, requestSubjectFromLlm, testLlmConnection } from './llm';
+import { MAX_CONTEXT_ITEMS, MAX_DRAFT_CHARS, MAX_INSTRUCTION_CHARS } from './constants';
 import { ensureSettingsInitialized, getSettings } from './storage';
 import type {
   ComposeKind,
@@ -66,10 +67,14 @@ export function isDraftRequest(message: unknown): message is DraftRequest {
     isDraftAction(candidate.action) &&
     typeof candidate.instruction === 'string' &&
     candidate.instruction.trim().length > 0 &&
+    candidate.instruction.length <= MAX_INSTRUCTION_CHARS &&
     typeof candidate.draft === 'string' &&
+    candidate.draft.length <= MAX_DRAFT_CHARS &&
     typeof candidate.subject === 'string' &&
     Array.isArray(candidate.contexts) &&
+    candidate.contexts.length <= MAX_CONTEXT_ITEMS &&
     candidate.contexts.every(isContextItem) &&
+    candidate.contexts.every((context) => context.provider === candidate.provider) &&
     typeof candidate.includeSubject === 'boolean'
   );
 }

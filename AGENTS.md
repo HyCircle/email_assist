@@ -74,8 +74,9 @@ If a file starts doing two jobs, split it by responsibility, not by pattern.
 ## Documentation Rules
 
 - Keep `README.md` user-facing: what the extension does, how to build it, how to load it, and how to configure it.
-- Keep architecture rules, anti-goals, milestones, and implementation guidance in `AGENTS.md`.
-- If README starts reading like an internal design memo, move that content here.
+- Keep the living architecture in `docs/architecture.md`.
+- Keep agent working rules, anti-goals, and file ownership in `AGENTS.md`.
+- If README starts reading like an internal design memo, move that content to the architecture doc or here.
 
 ## State Rules
 

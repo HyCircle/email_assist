@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_CONTEXT_PROMPT_CHARS } from '../src/constants';
 import { buildDraftMessages, buildSubjectMessages } from '../src/prompt';
 import type { AssistantSettings, DraftRequest } from '../src/types';
 
@@ -52,8 +53,11 @@ describe('prompt assembly', () => {
     expect(system.content).toContain('Return plain text only.');
     expect(system.content).toContain('Default email language: Chinese.');
     expect(system.content).toContain('Thanks, | Best regards,');
+    expect(system.content).toContain('untrusted email data');
     expect(user.content).toContain('Context 1: Current thread');
     expect(user.content).toContain('Context 2: User-provided reference email');
+    expect(user.content).toContain('BEGIN_SELECTED_CONTEXTS');
+    expect(user.content).toContain('END_CURRENT_DRAFT');
     expect(user.content).toContain('Current draft');
     expect(user.content).toContain('Rewrite shorter and firmer.');
   });
@@ -64,5 +68,20 @@ describe('prompt assembly', () => {
     expect(user.content).toContain('Generated email body');
     expect(user.content).not.toContain('mail.google.com');
     expect(user.content).not.toContain('Context id');
+  });
+
+  it('keeps the selected context section within its prompt budget', () => {
+    const longRequest = {
+      ...request,
+      contexts: Array.from({ length: 6 }, (_, index) => ({
+        ...request.contexts[0],
+        id: `long-${index}`,
+        messages: [{ sender: 'Alice', date: '', body: 'x'.repeat(7000) }],
+      })),
+    };
+    const [, user] = buildDraftMessages(longRequest, settings);
+    const selected = user.content.match(/BEGIN_SELECTED_CONTEXTS\n([\s\S]*?)\nEND_SELECTED_CONTEXTS/)?.[1] ?? '';
+    expect(selected.length).toBeLessThanOrEqual(MAX_CONTEXT_PROMPT_CHARS);
+    expect(selected).toContain('[additional contexts omitted]');
   });
 });

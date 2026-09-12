@@ -47,7 +47,13 @@ export function setSessionContexts(session: DraftSession, contexts: ContextItem[
 }
 
 export function setSessionDraft(session: DraftSession, draft: string): DraftSession {
-  return { ...session, draft, phase: draft.trim() ? 'ready' : 'idle', error: '' };
+  return {
+    ...session,
+    draft,
+    suggestedSubject: draft.trim() ? session.suggestedSubject : '',
+    phase: draft.trim() ? 'ready' : 'idle',
+    error: '',
+  };
 }
 
 export function startOver(session: DraftSession): DraftSession {

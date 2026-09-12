@@ -2,11 +2,15 @@ import type { AssistantSettings } from './types';
 
 export const EXTENSION_NAME = 'Email Assistant';
 export const SETTINGS_STORAGE_KEY = 'emailAssistantSettings.v3';
+export const SETTINGS_EXPORT_VERSION = 2;
 export const DEFAULT_BASE_URL = 'http://pc-yh:8070/v1';
 export const DEFAULT_MODEL = 'Qwen3.8-27B-Q4';
 export const COMMON_MODELS = ['Qwen3.8-27B-Q4', 'gemma-4-26B-A4B-QAT'];
+export const MAX_CONTEXT_ITEMS = 6;
 export const MAX_CONTEXT_ITEM_CHARS = 7000;
+export const MAX_CONTEXT_PROMPT_CHARS = 24_000;
 export const MAX_DRAFT_CHARS = 6000;
+export const MAX_INSTRUCTION_CHARS = 4000;
 export const REQUEST_TIMEOUT_MS = 45_000;
 
 export const DEFAULT_DRAFT_PRESETS = ['Reply politely and propose Friday afternoon.'];

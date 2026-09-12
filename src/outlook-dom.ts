@@ -79,12 +79,16 @@ function readElementText(element: Element): string {
   return normalizeText((element as HTMLElement).innerText || element.textContent || '');
 }
 
+function readNodeText(node: Node): string {
+  return normalizeText((node as HTMLElement).innerText || node.textContent || '');
+}
+
 function readHeaderValue(root: HTMLElement, label: string): string {
   const ariaHeader = Array.from(root.querySelectorAll<HTMLElement>('[aria-label]'))
     .map((element) => element.getAttribute('aria-label') ?? '')
     .find((value) => new RegExp(`^${label}:`, 'i').test(value));
 
-  return ariaHeader ? extractHeaderValue(ariaHeader, label) : '';
+  return ariaHeader ? extractHeaderValue(ariaHeader, label) : extractHeaderValue(readElementText(root), label);
 }
 
 function findReadingPane(root: Document | HTMLElement): HTMLElement | null {
@@ -107,7 +111,7 @@ function makeContext(subject: string, participants: string[], messages: EmailMes
   };
 }
 
-function isQuotedReplyNode(node: ChildNode): boolean {
+function isQuotedReplyElement(node: Element): node is HTMLElement {
   if (!(node instanceof HTMLElement) || node.dataset.emailAssistDraft === 'true') {
     return false;
   }
@@ -120,25 +124,92 @@ function isQuotedReplyNode(node: ChildNode): boolean {
   );
 }
 
-function extractQuotedContext(editor: HTMLElement): ContextItem | null {
-  const children = Array.from(editor.childNodes);
-  const boundaryIndex = children.findIndex(isQuotedReplyNode);
-  if (boundaryIndex < 0) {
-    return null;
+function isStrongQuotedReplyMarker(node: HTMLElement): boolean {
+  const text = normalizeText(node.innerText || node.textContent || '');
+  return node.id === 'divRplyFwdMsg' || /original message|wrote:/i.test(text);
+}
+
+function findQuotedReplyElement(editor: HTMLElement): HTMLElement | null {
+  const inlineBlockquote = editor.querySelector<HTMLElement>('blockquote');
+  if (inlineBlockquote) {
+    return inlineBlockquote;
   }
 
-  const quotedText = normalizeText(
-    children
-      .slice(boundaryIndex)
-      .map((node) => normalizeText((node as HTMLElement).innerText || node.textContent || ''))
+  const nestedExplicit = editor.querySelector<HTMLElement>('#divRplyFwdMsg');
+  if (nestedExplicit) {
+    return nestedExplicit;
+  }
+
+  const directChildren = Array.from(editor.children);
+  const direct = directChildren.find(
+    (element, index) => isQuotedReplyElement(element) &&
+      (isStrongQuotedReplyMarker(element) || index > 0),
+  );
+  if (direct) {
+    return direct as HTMLElement;
+  }
+
+  const composeRoot = findOutlookComposeRoot(editor);
+  const externalBlockquote = Array.from(composeRoot.querySelectorAll<HTMLElement>('blockquote'))
+    .find((element) => !editor.contains(element));
+  if (externalBlockquote) {
+    return externalBlockquote;
+  }
+
+  const explicit = composeRoot.querySelector<HTMLElement>('#divRplyFwdMsg');
+  if (explicit && !editor.contains(explicit)) {
+    return explicit;
+  }
+
+  return null;
+}
+
+function collectQuoteFromMarker(marker: HTMLElement): string {
+  const parent = marker.parentElement;
+  if (!parent) {
+    return readNodeText(marker);
+  }
+
+  const siblings = Array.from(parent.childNodes);
+  return normalizeText(
+    siblings
+      .slice(siblings.indexOf(marker))
+      .map((node) => readNodeText(node))
       .filter(Boolean)
       .join('\n\n'),
   );
+}
+
+function extractInlineSender(text: string): string {
+  const match = text.match(/([^<>\n]+?)\s*<([^<>\n]+)>\s+wrote:/i);
+  if (!match) {
+    return '';
+  }
+
+  const displayName = normalizeText(match[1]).replace(/^On\s+.*?,\s+/i, '');
+  return `${displayName} <${normalizeText(match[2])}>`;
+}
+
+function extractInlineSent(text: string): string {
+  return normalizeText(text.match(/(?:^|\n)On\s+(.+?)\s+wrote:/i)?.[1] ?? '');
+}
+
+function replySubject(editor: HTMLElement): string {
+  return normalizeText(findSubjectInput(editor)?.value ?? '').replace(/^(?:(?:re|fw|fwd)\s*:\s*)+/i, '');
+}
+
+function extractQuotedContext(editor: HTMLElement): ContextItem | null {
+  const boundary = findQuotedReplyElement(editor);
+  if (!boundary) {
+    return null;
+  }
+
+  const quotedText = collectQuoteFromMarker(boundary);
   if (!quotedText) {
     return null;
   }
 
-  const subject = extractHeaderValue(quotedText, 'Subject');
+  const subject = extractHeaderValue(quotedText, 'Subject') || replySubject(editor);
   const participants = ['From', 'To', 'Cc'].flatMap((label) => extractEmailAddresses(extractHeaderValue(quotedText, label)));
   const body = removeHeaderBlock(quotedText);
   if (!body) {
@@ -146,8 +217,8 @@ function extractQuotedContext(editor: HTMLElement): ContextItem | null {
   }
 
   return makeContext(subject, participants, [{
-    sender: extractHeaderValue(quotedText, 'From') || extractEmailAddresses(quotedText)[0] || 'Outlook message',
-    date: extractHeaderValue(quotedText, 'Sent'),
+    sender: extractHeaderValue(quotedText, 'From') || extractInlineSender(quotedText) || extractEmailAddresses(quotedText)[0] || 'Outlook message',
+    date: extractHeaderValue(quotedText, 'Sent') || extractInlineSent(quotedText),
     body,
   }]);
 }
@@ -166,7 +237,8 @@ function extractReadingPaneContext(root: Document | HTMLElement): ContextItem | 
     return null;
   }
 
-  const subjectNode = readingPane.querySelector<HTMLElement>('[id$="_SUBJECT"]:not(input)');
+  const conversation = readingPane.querySelector<HTMLElement>('#ConversationReadingPaneContainer') ?? readingPane;
+  const subjectNode = conversation.querySelector<HTMLElement>('[id^="CONV_"][id$="_SUBJECT"], [id$="_SUBJECT"]:not(input)');
   const subject = subjectNode ? readElementText(subjectNode) : '';
   const messages: EmailMessage[] = [];
   const participants: string[] = [];
@@ -178,11 +250,11 @@ function extractReadingPaneContext(root: Document | HTMLElement): ContextItem | 
       continue;
     }
 
-    const sender = readHeaderValue(messageRoot, 'From');
-    const sent = readHeaderValue(messageRoot, 'Sent');
+    const sender = readHeaderValue(messageRoot, 'From') || extractInlineSender(body);
+    const sent = readHeaderValue(messageRoot, 'Sent') || extractInlineSent(body);
     const sentNode = messageRoot.querySelector<HTMLElement>('[data-testid="SentReceivedSavedTime"]');
     for (const label of ['From', 'To', 'Cc'] as const) {
-      const headerValue = readHeaderValue(messageRoot, label);
+      const headerValue = readHeaderValue(messageRoot, label) || (label === 'From' ? sender : '');
       participants.push(...extractEmailAddresses(headerValue));
     }
     messages.push({
@@ -224,7 +296,7 @@ export function findOutlookComposeEditors(root: ParentNode = document): HTMLElem
 }
 
 export function getOutlookComposeKind(editor: HTMLElement): ComposeKind {
-  return Array.from(editor.childNodes).some(isQuotedReplyNode) ? 'reply' : 'new';
+  return findQuotedReplyElement(editor) || !findSubjectInput(editor) ? 'reply' : 'new';
 }
 
 export function getOutlookComposeMountForAssistant(editor: HTMLElement): AssistantMount {
@@ -250,17 +322,35 @@ export function getOutlookComposeMountForAssistant(editor: HTMLElement): Assista
 
 export function readPlainTextFromOutlookEditor(editor: HTMLElement): string {
   const clone = editor.cloneNode(true) as HTMLElement;
-  const boundary = Array.from(clone.childNodes).find((child) => isQuotedReplyNode(child)) ?? null;
+  const sourceHasInlineBlockquote = editor.querySelector('blockquote') !== null;
+  const boundary = sourceHasInlineBlockquote
+    ? clone.querySelector<HTMLElement>('blockquote')
+    : findQuotedReplyElement(clone);
+
+  if (sourceHasInlineBlockquote && boundary?.parentElement) {
+    const siblings = Array.from(boundary.parentElement.childNodes);
+    const boundaryIndex = siblings.indexOf(boundary);
+    for (const node of siblings.slice(0, boundaryIndex)) {
+      if (!(node instanceof HTMLElement)) {
+        continue;
+      }
+
+      const text = readNodeText(node);
+      const headerCount = (text.match(/(?:From|Sent|To|Cc|Bcc|Subject):/gi) ?? []).length;
+      if (node.id === 'divRplyFwdMsg' || headerCount >= 2) {
+        node.remove();
+      }
+    }
+  }
+
   if (!boundary) {
     return normalizeText(clone.innerText || clone.textContent || '');
   }
 
-  let remove = false;
-  for (const child of Array.from(clone.childNodes)) {
-    if (child === boundary) {
-      remove = true;
-    }
-    if (remove) {
+  const parent = boundary.parentElement;
+  const boundaryIndex = parent ? Array.from(parent.childNodes).indexOf(boundary) : -1;
+  if (parent && boundaryIndex >= 0) {
+    for (const child of Array.from(parent.childNodes).slice(boundaryIndex)) {
       child.remove();
     }
   }
@@ -274,17 +364,45 @@ export function readOutlookSubject(editor: HTMLElement): string {
 
 export function insertPlainTextIntoOutlook(editor: HTMLElement, text: string): void {
   const documentRef = editor.ownerDocument;
-  const children = Array.from(editor.childNodes);
-  const boundary = children.find((child) => isQuotedReplyNode(child)) ?? null;
+  const boundary = findQuotedReplyElement(editor);
+  const inlineBoundary = boundary && editor.contains(boundary) ? boundary : null;
 
-  for (const child of children) {
-    if (child === boundary) {
-      break;
+  if (!inlineBoundary) {
+    editor.replaceChildren(createDraftBlock(documentRef, text));
+  } else {
+    editor.querySelectorAll<HTMLElement>('[data-email-assist-draft="true"]').forEach((draft) => draft.remove());
+    const boundaryParent = inlineBoundary.parentElement;
+    if (!boundaryParent) {
+      editor.replaceChildren(createDraftBlock(documentRef, text));
+    } else {
+      const boundaryIndex = Array.from(boundaryParent.childNodes).indexOf(inlineBoundary);
+      let topLevelBoundary: Node = inlineBoundary;
+      while (topLevelBoundary.parentNode && topLevelBoundary.parentNode !== editor) {
+        topLevelBoundary = topLevelBoundary.parentNode;
+      }
+
+      if (boundaryParent === editor) {
+        for (const child of Array.from(editor.childNodes).slice(0, boundaryIndex)) {
+          child.remove();
+        }
+      } else {
+        for (const child of Array.from(editor.childNodes)) {
+          if (child !== topLevelBoundary) {
+            child.remove();
+          }
+        }
+      }
+
+      if (boundaryParent !== editor) {
+        const nestedBoundaryIndex = Array.from(boundaryParent.childNodes).indexOf(inlineBoundary);
+        for (const child of Array.from(boundaryParent.childNodes).slice(0, nestedBoundaryIndex)) {
+          child.remove();
+        }
+      }
+      boundaryParent.insertBefore(createDraftBlock(documentRef, text), inlineBoundary);
     }
-    child.remove();
   }
 
-  editor.insertBefore(createDraftBlock(documentRef, text), boundary);
   editor.dispatchEvent(createInputEvent(text));
   editor.focus();
 }
@@ -306,5 +424,7 @@ export function extractOutlookCurrentContext(
   editor?: HTMLElement,
 ): ContextItem | null {
   const composeEditor = editor ?? findOutlookComposeEditors(root)[0];
-  return (composeEditor && extractQuotedContext(composeEditor)) || extractReadingPaneContext(root);
+  const readingContext = extractReadingPaneContext(root);
+  const quotedContext = composeEditor ? extractQuotedContext(composeEditor) : null;
+  return readingContext || quotedContext;
 }

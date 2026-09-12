@@ -1,4 +1,4 @@
-import { getDefaultSettings, SETTINGS_STORAGE_KEY } from './constants';
+import { getDefaultSettings, SETTINGS_EXPORT_VERSION, SETTINGS_STORAGE_KEY } from './constants';
 import type { AssistantSettings, AssistantSettingsExport, EmailLanguage } from './types';
 
 function normalizeBaseUrl(candidate: unknown, fallback: string): string {
@@ -60,7 +60,7 @@ export function normalizeSettings(candidate?: Partial<AssistantSettings> | null)
 
 export function serializeSettingsExport(candidate: AssistantSettings, exportedAt = new Date().toISOString()): string {
   const payload = {
-    version: 2,
+    version: SETTINGS_EXPORT_VERSION,
     exportedAt,
     settings: normalizeSettings(candidate),
   } satisfies AssistantSettingsExport;
@@ -77,7 +77,12 @@ export function parseSettingsImport(text: string): AssistantSettings {
     throw new Error('Imported file is not valid JSON.');
   }
 
-  const candidate = isRecord(parsed) && 'settings' in parsed ? parsed.settings : parsed;
+  const envelope = isRecord(parsed) && 'settings' in parsed ? parsed : null;
+  if (envelope && envelope.version !== SETTINGS_EXPORT_VERSION) {
+    throw new Error(`Unsupported settings export version: ${String(envelope.version ?? 'missing')}.`);
+  }
+
+  const candidate = envelope ? envelope.settings : parsed;
   if (!isRecord(candidate)) {
     throw new Error('Imported file does not contain valid settings.');
   }

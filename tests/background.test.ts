@@ -29,6 +29,10 @@ describe('background message boundary', () => {
     expect(isDraftRequest({ ...validRequest, action: 'generate' })).toBe(false);
     expect(isDraftRequest({ ...validRequest, contexts: [{ ...validRequest.contexts[0], messages: [{ sender: 'Alice', date: '', body: 4 }] }] })).toBe(false);
     expect(isDraftRequest({ ...validRequest, instruction: ' ' })).toBe(false);
+    expect(isDraftRequest({ ...validRequest, instruction: 'x'.repeat(4001) })).toBe(false);
+    expect(isDraftRequest({ ...validRequest, draft: 'x'.repeat(6001) })).toBe(false);
+    expect(isDraftRequest({ ...validRequest, contexts: [{ ...validRequest.contexts[0], provider: 'outlook' }] })).toBe(false);
+    expect(isDraftRequest({ ...validRequest, contexts: Array.from({ length: 7 }, (_, index) => ({ ...validRequest.contexts[0], id: `thread-${index}` })) })).toBe(false);
   });
 
   it('accepts only supported Gmail and Outlook page senders', () => {

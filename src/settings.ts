@@ -36,40 +36,46 @@ function buildLayout(): void {
 
   app.innerHTML = `
     <main class="settings-shell">
-      <header class="settings-hero">
-        <p class="settings-kicker">Email Assistant</p>
-        <h1>Local writing help for Gmail and Outlook</h1>
-        <p>Configure the local llama.cpp connection and the writing defaults used by Draft and Improve.</p>
+      <header class="settings-header">
+        <div>
+          <p class="settings-kicker">Email Assistant</p>
+          <h1>Settings</h1>
+          <p>Connection and writing defaults for Gmail and Outlook.</p>
+        </div>
       </header>
       <form class="settings-card" id="settings-form">
         <section class="settings-section">
           <div class="settings-section-heading"><h2>Connection</h2><span id="permission-status" class="settings-badge">Checking…</span></div>
-          <label><span>Base URL</span><input id="base-url" name="base-url" type="url" required /></label>
-          <label><span>Model</span><select id="model-choice" name="model-choice"></select></label>
-          <label id="custom-model-field" hidden><span>Custom model</span><input id="custom-model" name="custom-model" type="text" /></label>
-          <label><span>Temperature</span><input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" required /></label>
-          <div class="settings-actions"><button type="button" id="test-connection">Test connection</button></div>
-          <p class="settings-note">Requests use <code>/chat/completions</code> under this base URL and never stream. Saving a custom endpoint asks Chrome for access to that endpoint origin.</p>
+          <div class="settings-grid settings-connection-grid">
+            <label class="settings-full"><span>Base URL</span><input id="base-url" name="base-url" type="url" required /></label>
+            <label><span>Model</span><select id="model-choice" name="model-choice"></select></label>
+            <label id="custom-model-field" hidden><span>Custom model</span><input id="custom-model" name="custom-model" type="text" /></label>
+            <label><span>Temperature</span><input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" required /></label>
+            <div class="settings-actions settings-full"><button type="button" id="test-connection">Test connection</button></div>
+            <p class="settings-note settings-full">Requests use <code>/chat/completions</code> under this base URL and never stream. Saving a custom endpoint asks Chrome for access to that endpoint origin.</p>
+          </div>
         </section>
 
         <section class="settings-section">
           <div class="settings-section-heading"><h2>Writing defaults</h2></div>
-          <label><span>Default language</span><select id="language" name="language"><option value="english">English</option><option value="chinese">Chinese</option></select></label>
-          <label><span>Style notes</span><textarea id="style-notes" name="style-notes" rows="3" placeholder="Concise, warm, and direct."></textarea></label>
-          <label><span>Sign-off options</span><textarea id="sign-offs" name="sign-offs" rows="3" placeholder="One option per line."></textarea></label>
-          <label><span>Signature block</span><textarea id="signature" name="signature" rows="3" placeholder="Optional fixed signature text."></textarea></label>
+          <div class="settings-grid settings-writing-grid">
+            <label><span>Default language</span><select id="language" name="language"><option value="english">English</option><option value="chinese">Chinese</option></select></label>
+            <label><span>Sign-off options</span><textarea id="sign-offs" name="sign-offs" rows="3" placeholder="One option per line."></textarea></label>
+            <label class="settings-full"><span>Style notes</span><textarea id="style-notes" name="style-notes" rows="3" placeholder="Concise, warm, and direct."></textarea></label>
+            <label class="settings-full"><span>Signature block</span><textarea id="signature" name="signature" rows="3" placeholder="Optional fixed signature text."></textarea></label>
+          </div>
         </section>
 
         <section class="settings-section settings-preset-grid">
-          <div><h2>Draft presets</h2><textarea id="draft-presets" rows="6" placeholder="One instruction per line."></textarea><p class="settings-note">Shown before the first draft.</p></div>
-          <div><h2>Improve presets</h2><textarea id="improve-presets" rows="6" placeholder="One instruction per line."></textarea><p class="settings-note">Shown after a draft exists.</p></div>
+          <div><h2>Draft presets</h2><textarea id="draft-presets" name="draft-presets" rows="5" placeholder="One instruction per line."></textarea><p class="settings-note">Shown before the first draft.</p></div>
+          <div><h2>Improve presets</h2><textarea id="improve-presets" name="improve-presets" rows="5" placeholder="One instruction per line."></textarea><p class="settings-note">Shown after a draft exists.</p></div>
         </section>
 
-        <section class="settings-section settings-advanced">
-          <div class="settings-section-heading"><h2>Advanced</h2><span>Transfer or restore settings</span></div>
+        <details class="settings-section settings-advanced">
+          <summary><span><strong>Advanced</strong><small>Transfer or restore settings</small></span></summary>
           <div class="settings-actions"><button type="button" id="export-button">Export</button><button type="button" id="import-button">Import</button><button type="button" id="reset-button">Restore defaults</button></div>
           <input id="import-file" type="file" accept="application/json,.json" hidden />
-        </section>
+        </details>
 
         <div class="settings-submit"><button type="submit" class="primary">Save settings</button><p id="status" class="settings-status" role="status">Ready.</p></div>
       </form>
@@ -129,11 +135,17 @@ async function ensureEndpointAccess(baseUrl: string): Promise<string> {
   return 'Endpoint access granted.';
 }
 
+let permissionStatusRequest = 0;
+
 async function updatePermissionStatus(baseUrl: string): Promise<void> {
   const status = document.querySelector<HTMLSpanElement>('#permission-status');
   if (!status) return;
+  const requestId = ++permissionStatusRequest;
   const pattern = getEndpointOriginPattern(baseUrl);
   const ready = Boolean(pattern && (await chrome.permissions.contains({ origins: [pattern] })));
+  if (requestId !== permissionStatusRequest) {
+    return;
+  }
   status.textContent = ready ? 'Access ready' : 'Access needed';
   status.dataset.ready = String(ready);
 }
