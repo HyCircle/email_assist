@@ -64,7 +64,9 @@ Every code change should improve the speed, clarity, or reliability of this loop
 - `storage.ts`: settings persistence and import/export normalization only
 - `settings.ts`: settings page behavior only
 - `settings.css`: settings page styling only
-- `icon.svg`: extension icon and in-page trigger icon only
+- `draft-session.ts`: draft session transitions only
+- `icon.svg`: in-page Assist trigger and source artwork
+- `icon-128.png`: Chrome toolbar icon; Chrome does not accept SVG here
 - `types.ts`: shared types only
 
 If a file starts doing two jobs, split it by responsibility, not by pattern.
@@ -105,7 +107,7 @@ If a file starts doing two jobs, split it by responsibility, not by pattern.
 ## Settings Rules
 
 - Runtime settings live in `chrome.storage.sync`.
-- `.env.local` is only for build-time defaults and should never be required for end users of a built extension.
+- Defaults live in code. Do not use `.env` for settings.
 - Keep settings import/export versioned and backward-compatible with plain settings JSON when practical.
 - Request endpoint permission during save or import before relying on the imported endpoint.
 

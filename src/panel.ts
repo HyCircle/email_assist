@@ -1,675 +1,501 @@
 import triggerIconUrl from '../icon.svg';
 
-import { EXTENSION_NAME, getDefaultSettings } from './constants';
+import { EXTENSION_NAME } from './constants';
+import {
+  createDraftSession,
+  failDraftRequest,
+  finishDraftRequest,
+  getPrimaryActionLabel,
+  setSessionContexts,
+  setSessionDraft,
+  startDraftRequest,
+  startOver,
+} from './draft-session';
 import { getSettings } from './storage';
 import type {
-  AssistAction,
-  AssistantAnchorRect,
-  AssistantSettings,
-  GenerateDraftRequest,
-  GenerateDraftResponse,
+  AssistantMount,
+  ComposeKind,
+  ContextItem,
+  DraftRequest,
+  DraftResponse,
+  DraftSession,
   OpenSettingsResponse,
   ProviderName,
-  RequestState,
-  ThreadContext,
 } from './types';
 
-type PanelBindings = {
+export type PanelBindings = {
   provider: ProviderName;
   editor: HTMLElement;
-  getComposeMount: (editor: HTMLElement) => HTMLElement;
-  getTriggerAnchor?: (editor: HTMLElement, triggerWidth: number, triggerHeight: number) => AssistantAnchorRect | null;
-  getThreadContext: () => ThreadContext;
-  panelDirection?: 'auto' | 'down';
+  composeKind: ComposeKind;
+  getAssistantMount: (editor: HTMLElement) => AssistantMount;
+  getCurrentContext: () => ContextItem | null;
   readDraft: (editor: HTMLElement) => string;
   readSubject: (editor: HTMLElement) => string;
   insertDraft: (editor: HTMLElement, text: string) => void;
   insertSubject: (editor: HTMLElement, text: string) => void;
 };
 
-type PanelState = {
-  requestState: RequestState;
-  result: string;
-  error: string;
-  suggestedSubject: string;
-  showSuggestedSubject: boolean;
+type PresetSettings = {
+  draftPresets: string[];
+  improvePresets: string[];
 };
 
-type PanelUiSettings = Pick<AssistantSettings, 'generatePresets' | 'refinePresets'>;
-
-type SplitActionControls = {
-  action: AssistAction;
-  primaryButton: HTMLButtonElement;
-  toggleButton: HTMLButtonElement;
-  menu: HTMLDivElement;
-};
-
-async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const temp = document.createElement('textarea');
-  temp.value = text;
-  temp.style.position = 'fixed';
-  temp.style.opacity = '0';
-  document.body.append(temp);
-  temp.select();
-  document.execCommand('copy');
-  temp.remove();
-}
-
-function stateLabel(state: PanelState): string {
-  if (state.requestState === 'loading') {
-    return 'Generating draft...';
-  }
-
-  if (state.requestState === 'error') {
-    return state.error;
-  }
-
-  if (state.requestState === 'success') {
-    return 'Draft ready.';
-  }
-
-  return 'Ready.';
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function resolveTriggerSize(editor: HTMLElement): number {
-  const editorFontSize = Number.parseFloat(window.getComputedStyle(editor).fontSize);
-  const fallbackFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize);
-  const baseFontSize = Number.isFinite(editorFontSize)
-    ? editorFontSize
-    : Number.isFinite(fallbackFontSize)
-      ? fallbackFontSize
-      : 14;
-
-  return clamp(Math.round(baseFontSize * 1.9), 24, 30);
-}
-
-function syncTriggerMetrics(root: HTMLElement, editor: HTMLElement): void {
-  const triggerSize = resolveTriggerSize(editor);
-  const shadowY = Math.max(6, Math.round(triggerSize * 0.3));
-  const shadowBlur = Math.max(12, Math.round(triggerSize * 0.6));
-  root.style.setProperty('--ea-trigger-size', `${triggerSize}px`);
-  root.style.setProperty('--ea-trigger-shadow', `0 ${shadowY}px ${shadowBlur}px rgba(86, 34, 21, 0.18)`);
-}
-
-function shortcutModifierLabel(): string {
-  return /mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
-}
-
-function resolvePresets(settings: PanelUiSettings, action: AssistAction): string[] {
-  return action === 'generate' ? settings.generatePresets : settings.refinePresets;
+function makeId(prefix: string): string {
+  return `${prefix}:${crypto.randomUUID()}`;
 }
 
 function createTriggerIcon(): HTMLImageElement {
   const icon = document.createElement('img');
-  icon.className = 'ea-trigger-icon';
   icon.src = triggerIconUrl;
   icon.alt = '';
-  icon.decoding = 'async';
   icon.setAttribute('aria-hidden', 'true');
   return icon;
 }
 
-export function attachAssistantPanel(bindings: PanelBindings) {
-  const defaultSettings = getDefaultSettings();
-  const panelSettings: PanelUiSettings = {
-    generatePresets: [...defaultSettings.generatePresets],
-    refinePresets: [...defaultSettings.refinePresets],
+function contextDisplayLabel(context: ContextItem): string {
+  return context.label || (context.kind === 'current-thread' ? 'Current thread' : 'Reference email');
+}
+
+function createPastedContext(provider: ProviderName, label: string, text: string): ContextItem {
+  return {
+    id: makeId('pasted'),
+    kind: 'pasted',
+    provider,
+    subject: label,
+    participants: [],
+    messages: [{ sender: 'User-provided reference', date: '', body: text }],
+    label,
   };
+}
+
+function field(labelText: string, control: HTMLElement): HTMLLabelElement {
+  const label = document.createElement('label');
+  label.className = 'ea-field';
+  const caption = document.createElement('span');
+  caption.textContent = labelText;
+  label.append(caption, control);
+  return label;
+}
+
+function attachRoot(root: HTMLElement, mount: AssistantMount): void {
+  if (mount.kind === 'flow') {
+    root.dataset.layout = 'strip';
+    if (mount.before && mount.before.parentNode === mount.host) {
+      mount.host.insertBefore(root, mount.before);
+    } else {
+      mount.host.append(root);
+    }
+    return;
+  }
+
+  root.dataset.layout = 'popover';
+  document.body.append(root);
+  const rect = mount.anchor.getBoundingClientRect();
+  root.style.top = `${Math.round(rect.bottom + 8)}px`;
+  root.style.left = `${Math.round(rect.left)}px`;
+}
+
+export function attachAssistantPanel(bindings: PanelBindings) {
+  const mount = bindings.getAssistantMount(bindings.editor);
+  const initialContext = bindings.composeKind === 'reply' ? bindings.getCurrentContext() : null;
+  let session: DraftSession = createDraftSession(
+    bindings.composeKind,
+    initialContext ? [initialContext] : [],
+    bindings.readDraft(bindings.editor),
+  );
+  let presetSettings: PresetSettings = { draftPresets: [], improvePresets: [] };
+  let open = false;
+  let currentContextDismissed = false;
+  let requestSeq = 0;
+
   const root = document.createElement('div');
   root.className = 'ea-root';
-  root.dataset.expand = 'down';
-
-  const mount = bindings.getComposeMount(bindings.editor);
-  const panelState: PanelState = {
-    requestState: 'idle',
-    result: '',
-    error: '',
-    suggestedSubject: '',
-    showSuggestedSubject: false,
-  };
+  root.dataset.provider = bindings.provider;
+  root.setAttribute('data-email-assist', 'true');
 
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.className = 'ea-trigger';
-  trigger.append(createTriggerIcon());
-  trigger.setAttribute('aria-label', 'Open email assistant');
-  trigger.title = 'Open email assistant';
+  trigger.append(createTriggerIcon(), document.createTextNode('Assist'));
+  trigger.setAttribute('aria-expanded', 'false');
+
+  const triggerRow = document.createElement('div');
+  triggerRow.className = 'ea-trigger-row';
+  triggerRow.append(trigger);
 
   const panel = document.createElement('section');
   panel.className = 'ea-panel';
+  panel.id = makeId('email-assist-panel');
   panel.hidden = true;
+  panel.setAttribute('aria-label', `${EXTENSION_NAME} panel`);
+  trigger.setAttribute('aria-controls', panel.id);
 
-  const menuLayer = document.createElement('div');
-  menuLayer.className = 'ea-menu-layer';
+  const contextChips = document.createElement('div');
+  contextChips.className = 'ea-context-chips';
 
-  const header = document.createElement('div');
-  header.className = 'ea-header';
-  const headerTop = document.createElement('div');
-  headerTop.className = 'ea-header-top';
-  headerTop.innerHTML = `
-    <div>
-      <p class="ea-kicker">${EXTENSION_NAME}</p>
-      <h2>${bindings.provider === 'gmail' ? 'Gmail' : 'Outlook'} compose helper</h2>
-    </div>
-  `;
+  const addContextButton = document.createElement('button');
+  addContextButton.type = 'button';
+  addContextButton.className = 'ea-link-button';
+  addContextButton.textContent = 'Context +';
 
-  const settingsButton = document.createElement('button');
-  settingsButton.type = 'button';
-  settingsButton.className = 'ea-icon-button';
-  settingsButton.innerHTML = '<span aria-hidden="true">⚙</span>';
-  settingsButton.title = 'Settings';
-  settingsButton.setAttribute('aria-label', 'Open Settings');
-  headerTop.append(settingsButton);
-  header.append(headerTop);
+  const contextRow = document.createElement('div');
+  contextRow.className = 'ea-context-row';
+  contextRow.append(contextChips, addContextButton);
 
-  const subjectLine = document.createElement('p');
-  subjectLine.className = 'ea-subject';
-  subjectLine.textContent = 'Current thread';
-  header.append(subjectLine);
-
-  const instructionLabel = document.createElement('label');
-  instructionLabel.className = 'ea-field';
-  instructionLabel.innerHTML = '<span>Instruction</span>';
+  const contextLabelInput = document.createElement('input');
+  contextLabelInput.placeholder = 'Label';
+  const contextTextInput = document.createElement('textarea');
+  contextTextInput.rows = 4;
+  contextTextInput.placeholder = 'Paste the email text you want the model to use.';
+  const addPastedButton = document.createElement('button');
+  addPastedButton.type = 'button';
+  addPastedButton.className = 'ea-primary-button';
+  addPastedButton.textContent = 'Add context';
+  const cancelContextButton = document.createElement('button');
+  cancelContextButton.type = 'button';
+  cancelContextButton.className = 'ea-secondary-button';
+  cancelContextButton.textContent = 'Cancel';
+  const contextFormActions = document.createElement('div');
+  contextFormActions.className = 'ea-inline-actions';
+  contextFormActions.append(addPastedButton, cancelContextButton);
+  const contextForm = document.createElement('div');
+  contextForm.className = 'ea-context-form';
+  contextForm.hidden = true;
+  contextForm.append(field('Label', contextLabelInput), field('Paste email text', contextTextInput), contextFormActions);
 
   const instructionInput = document.createElement('textarea');
-  instructionInput.rows = 4;
-  instructionInput.placeholder = 'reply politely and propose Friday';
-  instructionLabel.append(instructionInput);
+  instructionInput.rows = 3;
+  instructionInput.placeholder = 'Describe the message you want to write…';
+  const instructionLabel = field('What should the email say?', instructionInput);
 
-  const shortcutHint = document.createElement('p');
-  shortcutHint.className = 'ea-field-note';
-  shortcutHint.textContent = `${shortcutModifierLabel()}+Enter generates. ${shortcutModifierLabel()}+Shift+Enter refines.`;
-  instructionLabel.append(shortcutHint);
+  const presetSelect = document.createElement('select');
+  presetSelect.setAttribute('aria-label', 'Saved instructions');
+  presetSelect.append(new Option('Presets', ''));
 
-  const buttonRow = document.createElement('div');
-  buttonRow.className = 'ea-actions';
+  const primaryButton = document.createElement('button');
+  primaryButton.type = 'button';
+  primaryButton.className = 'ea-primary-button';
 
-  function createSplitAction(action: AssistAction, label: string, toneClass: string): SplitActionControls {
-    const group = document.createElement('div');
-    group.className = 'ea-split';
+  const draftActions = document.createElement('div');
+  draftActions.className = 'ea-draft-actions';
+  draftActions.append(primaryButton, presetSelect);
 
-    const primaryButton = document.createElement('button');
-    primaryButton.type = 'button';
-    primaryButton.className = `ea-action-button ${toneClass}`;
-    primaryButton.textContent = label;
+  const draftOutput = document.createElement('textarea');
+  draftOutput.rows = 8;
+  draftOutput.placeholder = 'Your draft will appear here.';
+  const draftLabel = field('Draft', draftOutput);
+  draftLabel.classList.add('ea-draft-field');
 
-    const toggleButton = document.createElement('button');
-    toggleButton.type = 'button';
-    toggleButton.className = `ea-action-toggle ${toneClass}`;
-    toggleButton.innerHTML = '<span aria-hidden="true">▾</span>';
-    toggleButton.setAttribute('aria-expanded', 'false');
-    toggleButton.setAttribute('aria-haspopup', 'menu');
-    toggleButton.setAttribute('aria-label', `${label} presets`);
+  const subjectInput = document.createElement('input');
+  subjectInput.placeholder = 'Suggested subject';
+  const subjectLabel = field('Suggested subject', subjectInput);
 
-    const menu = document.createElement('div');
-    menu.className = 'ea-menu';
-    menu.hidden = true;
-
-    group.append(primaryButton, toggleButton);
-    buttonRow.append(group);
-    menuLayer.append(menu);
-
-    return { action, primaryButton, toggleButton, menu };
-  }
-
-  const generateControls = createSplitAction('generate', 'Generate', 'ea-generate');
-  generateControls.primaryButton.title = `${shortcutModifierLabel()}+Enter`;
-
-  const refineControls = createSplitAction('refine', 'Refine', 'ea-refine');
-  refineControls.primaryButton.title = `${shortcutModifierLabel()}+Shift+Enter`;
-
-  const splitControls = new Map<AssistAction, SplitActionControls>([
-    ['generate', generateControls],
-    ['refine', refineControls],
-  ]);
-
-  const resultLabel = document.createElement('label');
-  resultLabel.className = 'ea-field';
-  resultLabel.innerHTML = '<span>Draft</span>';
-
-  const subjectSuggestionLabel = document.createElement('label');
-  subjectSuggestionLabel.className = 'ea-field';
-  subjectSuggestionLabel.hidden = true;
-  subjectSuggestionLabel.innerHTML = '<span>Suggested subject</span>';
-
-  const subjectSuggestionInput = document.createElement('input');
-  subjectSuggestionInput.type = 'text';
-  subjectSuggestionInput.className = 'ea-compact-input';
-  subjectSuggestionInput.placeholder = 'Suggested subject will appear here.';
-  subjectSuggestionLabel.append(subjectSuggestionInput);
-
-  const resultOutput = document.createElement('textarea');
-  resultOutput.rows = 8;
-  resultOutput.placeholder = 'Generated text will appear here.';
-  resultLabel.append(resultOutput);
-
-  const footer = document.createElement('div');
-  footer.className = 'ea-footer';
+  const applyButton = document.createElement('button');
+  applyButton.type = 'button';
+  applyButton.className = 'ea-primary-button';
+  applyButton.textContent = 'Apply';
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'ea-secondary-button';
+  copyButton.textContent = 'Copy';
+  const startOverButton = document.createElement('button');
+  startOverButton.type = 'button';
+  startOverButton.className = 'ea-secondary-button';
+  startOverButton.textContent = 'Start over';
+  const reviewActions = document.createElement('div');
+  reviewActions.className = 'ea-review-actions';
+  reviewActions.append(applyButton, copyButton, startOverButton);
 
   const status = document.createElement('p');
   status.className = 'ea-status';
-  status.textContent = 'Ready.';
+  status.setAttribute('role', 'status');
+  const settingsButton = document.createElement('button');
+  settingsButton.type = 'button';
+  settingsButton.className = 'ea-link-button';
+  settingsButton.textContent = 'Settings';
+  const footer = document.createElement('div');
+  footer.className = 'ea-footer';
+  footer.append(status, settingsButton);
 
-  const insertButton = document.createElement('button');
-  insertButton.type = 'button';
-  insertButton.textContent = 'Insert';
+  panel.append(
+    contextRow,
+    contextForm,
+    instructionLabel,
+    draftActions,
+    draftLabel,
+    subjectLabel,
+    reviewActions,
+    footer,
+  );
+  root.append(triggerRow, panel);
+  attachRoot(root, mount);
 
-  const copyButton = document.createElement('button');
-  copyButton.type = 'button';
-  copyButton.textContent = 'Copy';
-
-  footer.append(status, insertButton, copyButton);
-  panel.append(header, instructionLabel, buttonRow, subjectSuggestionLabel, resultLabel, footer);
-  root.append(trigger, panel, menuLayer);
-  document.body.append(root);
-  syncTriggerMetrics(root, bindings.editor);
-
-  let open = false;
-  let openMenuAction: AssistAction | null = null;
-
-  function closePresetMenus(): void {
-    for (const controls of splitControls.values()) {
-      controls.menu.hidden = true;
-      controls.toggleButton.dataset.open = 'false';
-      controls.toggleButton.setAttribute('aria-expanded', 'false');
-    }
-
-    openMenuAction = null;
+  function isLoading(): boolean {
+    return session.phase === 'drafting' || session.phase === 'improving';
   }
 
-  function renderPresetMenu(action: AssistAction): void {
-    const controls = splitControls.get(action);
-    if (!controls) {
-      return;
-    }
-
-    controls.menu.replaceChildren();
-    const presets = resolvePresets(panelSettings, action);
-
-    if (presets.length === 0) {
-      const emptyState = document.createElement('p');
-      emptyState.className = 'ea-menu-empty';
-      emptyState.textContent = 'No presets yet. Add them in Settings.';
-      controls.menu.append(emptyState);
-      return;
-    }
-
+  function renderPresets(): void {
+    const presets = session.draft ? presetSettings.improvePresets : presetSettings.draftPresets;
+    presetSelect.replaceChildren(new Option('Presets', ''));
     for (const preset of presets) {
-      const presetButton = document.createElement('button');
-      presetButton.type = 'button';
-      presetButton.className = 'ea-menu-item';
-      presetButton.textContent = preset;
-      presetButton.addEventListener('click', () => {
-        instructionInput.value = preset;
-        instructionInput.focus();
-        closePresetMenus();
-        void runAction(action);
+      presetSelect.append(new Option(preset, preset));
+    }
+  }
+
+  function renderContexts(): void {
+    contextChips.replaceChildren();
+    for (const context of session.contexts) {
+      const chip = document.createElement('span');
+      chip.className = 'ea-context-chip';
+      const label = document.createElement('span');
+      label.textContent = contextDisplayLabel(context);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ea-chip-remove';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Remove ${contextDisplayLabel(context)}`);
+      remove.addEventListener('click', () => {
+        if (context.kind === 'current-thread') {
+          currentContextDismissed = true;
+        }
+        session = setSessionContexts(session, session.contexts.filter((item) => item.id !== context.id));
+        render();
       });
-      controls.menu.append(presetButton);
+      chip.append(label, remove);
+      contextChips.append(chip);
     }
   }
 
-  function renderPresetMenus(): void {
-    renderPresetMenu('generate');
-    renderPresetMenu('refine');
+  function render(): void {
+    const loading = isLoading();
+    const hasDraft = Boolean(session.draft.trim());
+    primaryButton.textContent = getPrimaryActionLabel(session.phase, hasDraft);
+    primaryButton.disabled = loading;
+    if (draftOutput.value !== session.draft) {
+      draftOutput.value = session.draft;
+    }
+    draftOutput.disabled = loading;
+    if (subjectInput.value !== session.suggestedSubject) {
+      subjectInput.value = session.suggestedSubject;
+    }
+    subjectLabel.hidden = !session.suggestedSubject;
+    applyButton.disabled = loading || !hasDraft;
+    copyButton.disabled = loading || !hasDraft;
+    startOverButton.disabled = loading;
+    draftLabel.hidden = !hasDraft;
+    reviewActions.hidden = !hasDraft;
+    presetSelect.disabled = loading;
+    instructionInput.disabled = loading;
+    addContextButton.disabled = loading;
+    status.textContent = loading ? 'Writing…' : session.error;
+    renderContexts();
+    renderPresets();
   }
 
-  function refreshOpenMenuPosition(): void {
-    if (!openMenuAction) {
+  function refreshCurrentContext(): void {
+    if (
+      bindings.composeKind !== 'reply' ||
+      currentContextDismissed ||
+      session.contexts.some((context) => context.kind === 'current-thread')
+    ) {
       return;
     }
 
-    const controls = splitControls.get(openMenuAction);
-    if (!controls || controls.menu.hidden) {
-      return;
-    }
-
-    const rootRect = root.getBoundingClientRect();
-    const toggleRect = controls.toggleButton.getBoundingClientRect();
-    const menuRect = controls.menu.getBoundingClientRect();
-    const preferredTop = root.dataset.expand === 'up'
-      ? toggleRect.top - rootRect.top - menuRect.height - 8
-      : toggleRect.bottom - rootRect.top + 8;
-    const preferredLeft = toggleRect.right - rootRect.left - menuRect.width;
-    const absoluteLeft = clamp(rootRect.left + preferredLeft, 16, window.innerWidth - menuRect.width - 16);
-    const absoluteTop = clamp(rootRect.top + preferredTop, 16, window.innerHeight - menuRect.height - 16);
-
-    controls.menu.style.left = `${absoluteLeft - rootRect.left}px`;
-    controls.menu.style.top = `${absoluteTop - rootRect.top}px`;
-  }
-
-  async function loadPanelSettings(): Promise<void> {
-    try {
-      const settings = await getSettings();
-      panelSettings.generatePresets = [...settings.generatePresets];
-      panelSettings.refinePresets = [...settings.refinePresets];
-    } catch {
-      panelSettings.generatePresets = [...defaultSettings.generatePresets];
-      panelSettings.refinePresets = [...defaultSettings.refinePresets];
-    }
-
-    renderPresetMenus();
-    if (open) {
-      refreshSubject();
-      refreshPosition();
+    const currentContext = bindings.getCurrentContext();
+    if (currentContext) {
+      session = setSessionContexts(session, [...session.contexts, currentContext]);
     }
   }
 
-  function syncState(): void {
-    const isLoading = panelState.requestState === 'loading';
-    const hasResult = Boolean(panelState.result.trim());
-
-    status.textContent = stateLabel(panelState);
-    subjectSuggestionLabel.hidden = !panelState.showSuggestedSubject;
-    subjectSuggestionInput.value = panelState.suggestedSubject;
-    resultOutput.value = panelState.result;
-    insertButton.disabled = isLoading || !hasResult;
-    copyButton.disabled = isLoading || !hasResult;
-    for (const controls of splitControls.values()) {
-      controls.primaryButton.disabled = isLoading;
-      controls.toggleButton.disabled = isLoading;
-    }
-    trigger.dataset.loading = String(isLoading);
-
-    if (open) {
-      refreshPosition();
-    }
+  async function loadPresets(): Promise<void> {
+    const settings = await getSettings();
+    presetSettings = { draftPresets: settings.draftPresets, improvePresets: settings.improvePresets };
+    renderPresets();
   }
 
-  function refreshSubject(): void {
-    const thread = bindings.getThreadContext();
-    const currentSubject = bindings.readSubject(bindings.editor).trim();
-    subjectLine.textContent = currentSubject || thread.subject || 'New message';
-  }
-
-  function resolveAnchor(triggerWidth: number, triggerHeight: number): AssistantAnchorRect {
-    const mountRect = mount.getBoundingClientRect();
-    return (
-      bindings.getTriggerAnchor?.(bindings.editor, triggerWidth, triggerHeight) ?? {
-        left: mountRect.right - triggerWidth,
-        top: mountRect.top + 12,
-        width: triggerWidth,
-        height: triggerHeight,
-      }
-    );
-  }
-
-  function resolveExpandDirection(anchor: AssistantAnchorRect, rootHeight: number): 'up' | 'down' {
-    if (bindings.panelDirection === 'down') {
-      return 'down';
-    }
-
-    const spaceBelow = window.innerHeight - (anchor.top + anchor.height) - 16;
-    const spaceAbove = anchor.top - 16;
-    return spaceBelow >= rootHeight || spaceBelow >= spaceAbove ? 'down' : 'up';
-  }
-
-  function refreshPosition(): void {
-    if (!bindings.editor.isConnected || !mount.isConnected) {
-      root.style.display = 'none';
-      return;
-    }
-
-    root.style.display = 'flex';
-    syncTriggerMetrics(root, bindings.editor);
-
-    const triggerRect = trigger.getBoundingClientRect();
-    const triggerWidth = Math.ceil(triggerRect.width || 42);
-    const triggerHeight = Math.ceil(triggerRect.height || 36);
-    const anchor = resolveAnchor(triggerWidth, triggerHeight);
-    const isPanelOpen = open && !panel.hidden;
-    const rootRect = root.getBoundingClientRect();
-    const rootWidth = Math.ceil(isPanelOpen ? Math.max(rootRect.width, triggerWidth) : triggerWidth);
-    const rootHeight = Math.ceil(
-      isPanelOpen ? Math.min(Math.max(rootRect.height, triggerHeight), window.innerHeight - 32) : triggerHeight,
-    );
-    const direction = isPanelOpen ? resolveExpandDirection(anchor, rootHeight) : 'down';
-    root.dataset.expand = direction;
-
-    const maxLeft = Math.max(16, window.innerWidth - rootWidth - 16);
-    const maxTop = Math.max(16, window.innerHeight - rootHeight - 16);
-    const triggerLeft = clamp(anchor.left, 16, Math.max(16, window.innerWidth - triggerWidth - 16));
-    const triggerTop = clamp(anchor.top, 16, Math.max(16, window.innerHeight - triggerHeight - 16));
-    const left = clamp(isPanelOpen ? triggerLeft + triggerWidth - rootWidth : triggerLeft, 16, maxLeft);
-    const top = clamp(
-      isPanelOpen && direction === 'up' ? triggerTop + triggerHeight - rootHeight : triggerTop,
-      16,
-      maxTop,
-    );
-
-    root.style.top = `${top}px`;
-    root.style.left = `${left}px`;
-    refreshOpenMenuPosition();
-  }
-
-  async function runAction(action: 'generate' | 'refine'): Promise<void> {
+  async function runDraft(): Promise<void> {
+    refreshCurrentContext();
     const instruction = instructionInput.value.trim();
-    const currentDraft = bindings.readDraft(bindings.editor);
-    const currentSubject = bindings.readSubject(bindings.editor).trim();
-    const thread = bindings.getThreadContext();
-    const shouldGenerateSubject =
-      action === 'generate' && !currentSubject && !thread.subject.trim() && thread.messages.length === 0;
-
     if (!instruction) {
-      panelState.requestState = 'error';
-      panelState.error = 'Add an instruction before generating.';
-      syncState();
+      session = failDraftRequest(session, 'Describe what you want the email to say.');
+      render();
+      instructionInput.focus();
       return;
     }
 
-    if (action === 'refine' && !currentDraft) {
-      panelState.requestState = 'error';
-      panelState.error = 'There is no current draft to refine.';
-      syncState();
-      return;
-    }
+    const seq = ++requestSeq;
+    const action = session.draft.trim() ? 'improve' : 'draft';
+    session = startDraftRequest(session);
+    render();
 
-    refreshSubject();
-    panelState.requestState = 'loading';
-    panelState.error = '';
-    if (action === 'generate') {
-      panelState.suggestedSubject = '';
-      panelState.showSuggestedSubject = false;
-    }
-    closePresetMenus();
-    syncState();
-
-    const request: GenerateDraftRequest = {
-      type: 'email-assist:generate',
+    const request: DraftRequest = {
+      type: 'email-assist:draft',
       provider: bindings.provider,
+      composeKind: bindings.composeKind,
       action,
       instruction,
-      currentDraft: action === 'refine' ? currentDraft : currentDraft || undefined,
-      currentSubject: currentSubject || undefined,
-      generateSubject: shouldGenerateSubject,
-      thread,
+      draft: session.draft,
+      subject: bindings.readSubject(bindings.editor),
+      contexts: session.contexts,
+      includeSubject: action === 'draft' && bindings.composeKind === 'new' && !bindings.readSubject(bindings.editor).trim(),
     };
 
     try {
-      const response = (await chrome.runtime.sendMessage(request)) as GenerateDraftResponse;
-      if (!response.ok) {
-        throw new Error(response.error);
+      const response = (await chrome.runtime.sendMessage(request)) as DraftResponse | undefined;
+      if (seq !== requestSeq || !root.isConnected) {
+        return;
+      }
+      if (!response || !response.ok) {
+        throw new Error(response?.error || 'Could not create a draft.');
       }
 
-      panelState.requestState = 'success';
-      panelState.result = response.draft;
-      panelState.error = '';
-      if (shouldGenerateSubject) {
-        panelState.suggestedSubject = response.subject ?? '';
-        panelState.showSuggestedSubject = Boolean(panelState.suggestedSubject);
+      session = finishDraftRequest(session, response.draft, response.suggestedSubject ?? '');
+      if (response.subjectError) {
+        session = { ...session, error: `Draft ready. Subject suggestion unavailable: ${response.subjectError}` };
       }
     } catch (error) {
-      panelState.requestState = 'error';
-      panelState.error = error instanceof Error ? error.message : 'Could not generate a draft.';
+      if (seq !== requestSeq || !root.isConnected) {
+        return;
+      }
+      session = failDraftRequest(session, error instanceof Error ? error.message : 'Could not create a draft.');
     }
 
-    syncState();
+    render();
   }
 
-  trigger.addEventListener('click', () => {
+  trigger.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     open = !open;
     panel.hidden = !open;
-    closePresetMenus();
-    refreshSubject();
+    trigger.setAttribute('aria-expanded', String(open));
     if (open) {
-      void loadPanelSettings();
-      window.setTimeout(() => {
-        if (!open) {
-          return;
-        }
-
-        refreshSubject();
-        refreshPosition();
-      }, 180);
-    }
-    refreshPosition();
-    if (open) {
+      refreshCurrentContext();
+      void loadPresets().catch((error: unknown) => {
+        status.textContent = error instanceof Error ? error.message : 'Could not load saved instructions.';
+      });
+      render();
       instructionInput.focus();
     }
   });
 
-  for (const controls of splitControls.values()) {
-    controls.primaryButton.addEventListener('click', () => {
-      void runAction(controls.action);
-    });
+  addContextButton.addEventListener('click', () => {
+    contextForm.hidden = !contextForm.hidden;
+    if (!contextForm.hidden) {
+      contextLabelInput.focus();
+    }
+  });
 
-    controls.toggleButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const shouldOpen = openMenuAction !== controls.action;
-      closePresetMenus();
-      if (!shouldOpen) {
-        refreshPosition();
-        return;
-      }
+  cancelContextButton.addEventListener('click', () => {
+    contextForm.hidden = true;
+    contextLabelInput.value = '';
+    contextTextInput.value = '';
+  });
 
-      controls.menu.hidden = false;
-      controls.toggleButton.dataset.open = 'true';
-      controls.toggleButton.setAttribute('aria-expanded', 'true');
-      openMenuAction = controls.action;
-      refreshPosition();
-    });
-  }
+  addPastedButton.addEventListener('click', () => {
+    const label = contextLabelInput.value.trim();
+    const text = contextTextInput.value.trim();
+    if (!label || !text) {
+      status.textContent = 'Add a label and paste the reference email first.';
+      return;
+    }
 
+    session = setSessionContexts(session, [...session.contexts, createPastedContext(bindings.provider, label, text)]);
+    contextForm.hidden = true;
+    contextLabelInput.value = '';
+    contextTextInput.value = '';
+    render();
+  });
+
+  presetSelect.addEventListener('change', () => {
+    if (presetSelect.value) {
+      instructionInput.value = presetSelect.value;
+    }
+    presetSelect.value = '';
+    instructionInput.focus();
+  });
+
+  primaryButton.addEventListener('click', () => void runDraft());
   instructionInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void runDraft();
+    }
+  });
+
+  draftOutput.addEventListener('input', () => {
+    if (!isLoading()) {
+      session = setSessionDraft(session, draftOutput.value);
+      render();
+    }
+  });
+
+  subjectInput.addEventListener('input', () => {
+    session = { ...session, suggestedSubject: subjectInput.value };
+  });
+
+  applyButton.addEventListener('click', () => {
+    if (!session.draft.trim()) return;
+    bindings.insertDraft(bindings.editor, session.draft);
+    const existingSubject = bindings.readSubject(bindings.editor).trim();
+    if (!existingSubject && session.suggestedSubject.trim()) {
+      bindings.insertSubject(bindings.editor, session.suggestedSubject.trim());
+    }
+    status.textContent = 'Applied to compose. Review it before sending.';
+  });
+
+  copyButton.addEventListener('click', () => {
+    void navigator.clipboard.writeText(session.draft).then(
+      () => {
+        status.textContent = 'Copied to clipboard.';
+      },
+      () => {
+        status.textContent = 'Could not copy the draft.';
+      },
+    );
+  });
+
+  startOverButton.addEventListener('click', () => {
+    requestSeq += 1;
+    session = startOver(session);
+    instructionInput.value = '';
+    render();
+    instructionInput.focus();
+  });
+
+  settingsButton.addEventListener('click', () => {
+    void chrome.runtime.sendMessage({ type: 'email-assist:open-settings' }).then((response: OpenSettingsResponse | undefined) => {
+      if (response && !response.ok) {
+        status.textContent = response.error ?? 'Could not open Settings.';
+      }
+    });
+  });
+
+  const handleStorageChange = (): void => {
+    void loadPresets();
+  };
+  const handleEscape = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !open) {
       return;
     }
 
     event.preventDefault();
-    void runAction(event.shiftKey ? 'refine' : 'generate');
-  });
-
-  insertButton.addEventListener('click', () => {
-    const text = resultOutput.value.trim();
-    if (!text) {
-      return;
-    }
-
-    bindings.insertDraft(bindings.editor, text);
-    const suggestedSubject = subjectSuggestionInput.value.trim();
-    const currentSubject = bindings.readSubject(bindings.editor).trim();
-    const insertedSubject = Boolean(suggestedSubject) && !currentSubject;
-
-    if (insertedSubject) {
-      bindings.insertSubject(bindings.editor, suggestedSubject);
-    }
-
-    panelState.requestState = 'success';
-    panelState.error = '';
-    panelState.suggestedSubject = suggestedSubject;
-    panelState.showSuggestedSubject = Boolean(suggestedSubject);
-    status.textContent = insertedSubject ? 'Inserted draft and subject.' : 'Inserted into compose.';
-  });
-
-  subjectSuggestionInput.addEventListener('input', () => {
-    panelState.suggestedSubject = subjectSuggestionInput.value;
-  });
-
-  copyButton.addEventListener('click', () => {
-    const text = resultOutput.value.trim();
-    if (!text) {
-      return;
-    }
-
-    void copyText(text).then(() => {
-      status.textContent = 'Copied to clipboard.';
-    });
-  });
-
-  settingsButton.addEventListener('click', () => {
-    void chrome.runtime
-      .sendMessage({ type: 'email-assist:open-settings' })
-      .then((response: OpenSettingsResponse | undefined) => {
-        if (response && !response.ok) {
-          panelState.requestState = 'error';
-          panelState.error = response.error ?? 'Could not open Settings.';
-          syncState();
-          return;
-        }
-
-        status.textContent = 'Opened settings in a new tab.';
-      })
-      .catch((error: unknown) => {
-        panelState.requestState = 'error';
-        panelState.error = error instanceof Error ? error.message : 'Could not open Settings.';
-        syncState();
-      });
-  });
-
-  const handleStorageChange = (): void => {
-    void loadPanelSettings();
+    event.stopPropagation();
+    open = false;
+    panel.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
   };
 
-  const handlePointerDown = (event: Event): void => {
-    if (!(event.target instanceof Node) || root.contains(event.target)) {
-      return;
-    }
-
-    closePresetMenus();
-  };
-
-  const handleDocumentKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') {
-      closePresetMenus();
-    }
-  };
-
-  const resizeObserver = new ResizeObserver(() => {
-    refreshPosition();
-  });
-
-  resizeObserver.observe(mount);
   chrome.storage.onChanged.addListener(handleStorageChange);
-  window.addEventListener('resize', refreshPosition);
-  document.addEventListener('pointerdown', handlePointerDown, true);
-  document.addEventListener('keydown', handleDocumentKeyDown, true);
-  document.addEventListener('scroll', refreshPosition, true);
-
-  refreshSubject();
-  renderPresetMenus();
-  void loadPanelSettings();
-  syncState();
-  refreshPosition();
+  document.addEventListener('keydown', handleEscape, true);
+  render();
 
   return {
     cleanup() {
-      resizeObserver.disconnect();
+      requestSeq += 1;
       chrome.storage.onChanged.removeListener(handleStorageChange);
-      window.removeEventListener('resize', refreshPosition);
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleDocumentKeyDown, true);
-      document.removeEventListener('scroll', refreshPosition, true);
+      document.removeEventListener('keydown', handleEscape, true);
       root.remove();
     },
-    refreshPosition,
   };
 }

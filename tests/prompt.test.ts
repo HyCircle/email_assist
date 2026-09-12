@@ -1,94 +1,68 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildChatMessages, buildSubjectMessages } from '../src/prompt';
-import type { AssistantSettings, GenerateDraftRequest } from '../src/types';
+import { buildDraftMessages, buildSubjectMessages } from '../src/prompt';
+import type { AssistantSettings, DraftRequest } from '../src/types';
 
-describe('buildChatMessages', () => {
-  it('includes the instruction, thread context, and current draft when refining', () => {
-    const settings: AssistantSettings = {
-      endpoint: 'http://localhost:8070/v1/chat/completions',
-      model: 'Qwen3.6-35B-A3B-Q4_K_S-Agent',
-      temperature: 0.2,
-      styleNotes: 'Warm and concise.',
-      apiKey: '',
-      defaultLanguage: 'chinese',
-      generatePresets: ['Draft a concise update.'],
-      refinePresets: ['Rewrite shorter and firmer.'],
-      signOffOptions: ['Thanks,', 'Best regards,'],
-      signatureBlock: 'Yuncheng Hao\nPhD Student',
-    };
+const settings: AssistantSettings = {
+  baseUrl: 'http://pc-yh:8070/v1',
+  model: 'Qwen3.8-27B-Q4',
+  temperature: 0.2,
+  styleNotes: 'Warm and concise.',
+  defaultLanguage: 'chinese',
+  draftPresets: [],
+  improvePresets: [],
+  signOffOptions: ['Thanks,', 'Best regards,'],
+  signatureBlock: 'Yuncheng Hao\nPhD Student',
+};
 
-    const request: GenerateDraftRequest = {
-      type: 'email-assist:generate',
+const request: DraftRequest = {
+  type: 'email-assist:draft',
+  provider: 'gmail',
+  composeKind: 'reply',
+  action: 'improve',
+  instruction: 'Rewrite shorter and firmer.',
+  draft: 'Hi team, I wanted to check whether Friday still works for everyone.',
+  subject: 'Friday meeting',
+  includeSubject: false,
+  contexts: [
+    {
+      id: 'thread-1',
+      kind: 'current-thread',
       provider: 'gmail',
-      action: 'refine',
-      instruction: 'Rewrite shorter and firmer.',
-      currentDraft: 'Hi team, I wanted to check whether Friday still works for everyone.',
-      thread: {
-        provider: 'gmail',
-        subject: 'Friday meeting',
-        participants: ['Alice', 'Bob'],
-        sourceUrl: 'https://mail.google.com/mail/u/0/#inbox/example',
-        messages: [
-          {
-            sender: 'Alice',
-            date: '2026-04-30',
-            body: 'Can we land on a final meeting time?',
-          },
-        ],
-      },
-    };
+      subject: 'Friday meeting',
+      participants: ['Alice', 'Bob'],
+      label: 'Current thread',
+      messages: [{ sender: 'Alice', date: '2026-04-30', body: 'Can we land on a final meeting time?' }],
+    },
+    {
+      id: 'paste-1',
+      kind: 'pasted',
+      provider: 'gmail',
+      subject: 'Reference',
+      participants: [],
+      label: 'Reference email',
+      messages: [{ sender: 'User-provided reference', date: '', body: 'Please keep the answer direct.' }],
+    },
+  ],
+};
 
-    const [systemMessage, userMessage] = buildChatMessages(request, settings);
-
-    expect(systemMessage.content).toContain('Return plain text only.');
-    expect(systemMessage.content).toContain('Warm and concise.');
-    expect(systemMessage.content).toContain('Default email language: Chinese.');
-    expect(systemMessage.content).toContain('Thanks, | Best regards,');
-    expect(systemMessage.content).toContain('Yuncheng Hao');
-    expect(userMessage.content).toContain('Rewrite shorter and firmer.');
-    expect(userMessage.content).toContain('Default language: Chinese');
-    expect(userMessage.content).toContain('Friday meeting');
-    expect(userMessage.content).toContain('Alice');
-    expect(userMessage.content).toContain('Current draft');
+describe('prompt assembly', () => {
+  it('keeps the current draft and independently separated contexts in the request', () => {
+    const [system, user] = buildDraftMessages(request, settings);
+    expect(system.content).toContain('Return plain text only.');
+    expect(system.content).toContain('Default email language: Chinese.');
+    expect(system.content).toContain('Thanks, | Best regards,');
+    expect(user.content).toContain('Context 1: Current thread');
+    expect(user.content).toContain('Context 2: User-provided reference email');
+    expect(user.content).toContain('Current draft');
+    expect(user.content).toContain('Rewrite shorter and firmer.');
   });
 
-  it('builds a subject-only prompt for new outbound emails', () => {
-    const settings: AssistantSettings = {
-      endpoint: 'http://localhost:8070/v1/chat/completions',
-      model: 'Qwen3.6-35B-A3B-Q4_K_S-Agent',
-      temperature: 0.2,
-      styleNotes: '',
-      apiKey: '',
-      defaultLanguage: 'english',
-      generatePresets: [],
-      refinePresets: [],
-      signOffOptions: [],
-      signatureBlock: '',
-    };
-
-    const request: GenerateDraftRequest = {
-      type: 'email-assist:generate',
-      provider: 'gmail',
-      action: 'generate',
-      instruction: 'Invite Prof. Smith to a brief check-in next week.',
-      thread: {
-        provider: 'gmail',
-        subject: '',
-        participants: ['Prof. Smith'],
-        sourceUrl: 'https://mail.google.com/mail/u/0/#inbox/example',
-        messages: [],
-      },
-    };
-
-    const [systemMessage, userMessage] = buildSubjectMessages(
-      request,
-      'Hello Prof. Smith,\n\nWould you be available for a brief check-in next week?\n\nBest regards,\nYuncheng Hao',
-      settings,
-    );
-
-    expect(systemMessage.content).toContain('Return only the subject line text.');
-    expect(userMessage.content).toContain('Invite Prof. Smith');
-    expect(userMessage.content).toContain('Generated email body');
+  it('builds a subject prompt without browser URLs or UI text', () => {
+    const [system, user] = buildSubjectMessages({ ...request, composeKind: 'new', action: 'draft' }, 'Hello there.', settings);
+    expect(system.content).toContain('Return only one subject line.');
+    expect(user.content).toContain('Generated email body');
+    expect(user.content).not.toContain('mail.google.com');
+    expect(user.content).not.toContain('Context id');
   });
 });

@@ -1,182 +1,43 @@
 :root {
-  color: #1f1611;
-  font-family: 'Aptos', 'Segoe UI Variable Text', 'Trebuchet MS', sans-serif;
-  background:
-    radial-gradient(circle at top left, rgba(200, 127, 74, 0.25), transparent 28%),
-    linear-gradient(180deg, #fffaf3, #f1e4d5);
+  color: #1f2933;
+  background: #f4f7fa;
+  font-family: 'Segoe UI', Arial, sans-serif;
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-}
+body { margin: 0; min-height: 100vh; }
 
-code {
-  font-family: 'Cascadia Code', 'Consolas', monospace;
-}
-
-.settings-shell {
-  box-sizing: border-box;
-  display: grid;
-  gap: 24px;
-  margin: 0 auto;
-  max-width: 920px;
-  padding: 40px 24px 64px;
-}
-
-.settings-hero,
-.settings-card {
-  border: 1px solid rgba(95, 58, 39, 0.14);
-  border-radius: 24px;
-  box-shadow: 0 18px 40px rgba(72, 44, 31, 0.12);
-  background: rgba(255, 250, 242, 0.9);
-}
-
-.settings-hero {
-  padding: 28px;
-}
-
-.settings-card {
-  display: grid;
-  gap: 18px;
-  padding: 28px;
-}
-
-.settings-kicker,
-.settings-copy,
-.settings-status,
-.settings-defaults dt {
-  color: #664c40;
-}
-
-.settings-kicker {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  margin: 0 0 10px;
-  text-transform: uppercase;
-}
-
-.settings-hero h1 {
-  font-size: clamp(30px, 5vw, 48px);
-  line-height: 1.05;
-  margin: 0 0 12px;
-  max-width: 12ch;
-}
-
-.settings-copy {
-  font-size: 16px;
-  line-height: 1.6;
-  margin: 0;
-  max-width: 64ch;
-}
-
-.settings-defaults {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  margin: 24px 0 0;
-}
-
-.settings-defaults div {
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  padding: 16px;
-}
-
-.settings-defaults dt,
-.settings-defaults dd,
-.settings-card label span,
-.settings-status {
-  margin: 0;
-}
-
-.settings-defaults dd {
-  font-size: 15px;
-  font-weight: 600;
-  margin-top: 6px;
-  overflow-wrap: anywhere;
-}
-
-.settings-card label {
-  display: grid;
-  gap: 8px;
-}
-
-.settings-card input,
-.settings-card select,
-.settings-card textarea,
-.settings-card button {
-  font: inherit;
-}
-
-.settings-card input,
-.settings-card select,
-.settings-card textarea {
-  border: 1px solid rgba(95, 58, 39, 0.16);
-  border-radius: 14px;
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.85);
-}
-
-.settings-presets {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.settings-card textarea {
-  min-height: 120px;
-  resize: vertical;
-}
-
-.settings-note {
-  color: #664c40;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.settings-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.settings-actions button {
-  border: 1px solid rgba(95, 58, 39, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  color: #261912;
-  cursor: pointer;
-  padding: 12px 18px;
-}
-
-.settings-actions button:not(.primary) {
-  min-width: 160px;
-}
-
-.settings-actions .primary {
-  background: linear-gradient(135deg, #1e2f30, #314d4f);
-  border-color: transparent;
-  color: #fff7ef;
-}
-
-.settings-status {
-  min-height: 20px;
-}
+.settings-shell { box-sizing: border-box; display: grid; gap: 18px; margin: 0 auto; max-width: 820px; padding: 36px 20px 56px; }
+.settings-hero, .settings-card { background: #fff; border: 1px solid rgba(31, 41, 51, 0.12); border-radius: 18px; box-shadow: 0 10px 28px rgba(31, 41, 51, 0.08); }
+.settings-hero { padding: 26px; }
+.settings-hero h1 { font-size: clamp(28px, 5vw, 42px); line-height: 1.08; margin: 0 0 12px; max-width: 18ch; }
+.settings-hero p:last-child { color: #66737d; line-height: 1.6; margin: 0; max-width: 65ch; }
+.settings-kicker { color: #285c91; font-size: 11px; font-weight: 700; letter-spacing: .1em; margin: 0 0 10px; text-transform: uppercase; }
+.settings-card { display: grid; gap: 0; overflow: hidden; }
+.settings-section { border-bottom: 1px solid rgba(31, 41, 51, 0.1); display: grid; gap: 14px; padding: 22px 26px; }
+.settings-section:last-of-type { border-bottom: 0; }
+.settings-section-heading { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+.settings-section h2 { font-size: 17px; margin: 0; }
+.settings-section-heading > span { color: #66737d; font-size: 12px; }
+.settings-card label, .settings-preset-grid > div { display: grid; gap: 6px; }
+.settings-card label > span { font-size: 13px; font-weight: 600; }
+.settings-card input, .settings-card select, .settings-card textarea, .settings-card button { font: inherit; }
+.settings-card input, .settings-card select, .settings-card textarea { background: #fff; border: 1px solid rgba(31, 41, 51, .18); border-radius: 9px; color: #1f2933; padding: 9px 10px; width: 100%; }
+.settings-card textarea { resize: vertical; }
+.settings-preset-grid { gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-preset-grid h2 { margin-bottom: 0; }
+.settings-note { color: #66737d; font-size: 12px; line-height: 1.45; margin: 0; }
+.settings-note code { font-family: Consolas, monospace; }
+.settings-badge { background: #eef2f5; border-radius: 999px; padding: 4px 8px; }
+.settings-badge[data-ready='true'] { background: #e5f4ea; color: #166534; }
+.settings-actions, .settings-submit { align-items: center; display: flex; flex-wrap: wrap; gap: 9px; }
+.settings-actions button, .settings-submit button { background: #fff; border: 1px solid rgba(31, 41, 51, .18); border-radius: 8px; cursor: pointer; padding: 9px 13px; }
+.settings-submit { padding: 18px 26px 22px; }
+.settings-submit .primary { background: #285c91; border-color: #285c91; color: #fff; font-weight: 650; }
+.settings-status { color: #66737d; font-size: 13px; margin: 0; min-height: 18px; }
 
 @media (max-width: 640px) {
-  .settings-shell {
-    padding-inline: 16px;
-  }
-
-  .settings-card,
-  .settings-hero {
-    border-radius: 20px;
-    padding: 20px;
-  }
-
-  .settings-actions button {
-    width: 100%;
-  }
+  .settings-shell { padding-inline: 12px; }
+  .settings-hero, .settings-section { padding: 18px; }
+  .settings-preset-grid { grid-template-columns: 1fr; }
+  .settings-submit { padding-inline: 18px; }
 }

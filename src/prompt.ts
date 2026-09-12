@@ -1,5 +1,5 @@
-import { MAX_DRAFT_CHARS, MAX_THREAD_CHARS } from './constants';
-import type { AssistantSettings, EmailLanguage, EmailMessage, GenerateDraftRequest, LlmMessage } from './types';
+import { MAX_CONTEXT_ITEM_CHARS, MAX_DRAFT_CHARS } from './constants';
+import type { AssistantSettings, ContextItem, DraftRequest, EmailLanguage, EmailMessage, LlmMessage } from './types';
 
 function normalizeBlock(text: string): string {
   return text
@@ -15,29 +15,54 @@ function trimToLimit(text: string, maxChars: number): string {
     return text;
   }
 
-  return `${text.slice(0, maxChars).trim()}\n[truncated]`;
+  return `${text.slice(-maxChars).trim()}\n[older content omitted]`;
 }
 
 function formatMessage(message: EmailMessage, index: number): string {
-  const headerParts = [`Message ${index + 1}`, `From: ${message.sender}`];
+  const header = [`Message ${index + 1}`, `From: ${message.sender}`];
   if (message.date) {
-    headerParts.push(`Date: ${message.date}`);
+    header.push(`Date: ${message.date}`);
   }
 
-  return `${headerParts.join(' | ')}\n${normalizeBlock(message.body)}`;
+  return `${header.join(' | ')}\n${normalizeBlock(message.body)}`;
 }
 
-function languageLabel(language: EmailLanguage): string {
-  return language === 'chinese' ? 'Chinese' : 'English';
+function contextLabel(context: ContextItem): string {
+  if (context.kind === 'current-thread') {
+    return 'Current thread';
+  }
+
+  return 'User-provided reference email';
 }
 
-function buildWritingPreferenceSections(settings: AssistantSettings): string[] {
+function formatContext(context: ContextItem, index: number): string {
+  const transcript = context.messages.map(formatMessage).join('\n\n---\n\n');
+  const lines = [
+    `Context ${index + 1}: ${contextLabel(context)}`,
+    `Label: ${normalizeBlock(context.label) || '(unnamed)'}`,
+    `Subject: ${normalizeBlock(context.subject) || '(no subject)'}`,
+    `Participants: ${context.participants.join(', ') || '(unknown participants)'}`,
+    `Messages:\n${trimToLimit(transcript || '(no message text)', MAX_CONTEXT_ITEM_CHARS)}`,
+  ];
+
+  return lines.join('\n');
+}
+
+function languageInstruction(language: EmailLanguage): string {
+  return language === 'chinese'
+    ? 'Default email language: Chinese. Write in Chinese unless the instruction clearly asks for another language.'
+    : 'Default email language: English. Write in English unless the instruction clearly asks for another language.';
+}
+
+function writingPreferences(settings: AssistantSettings): string[] {
   const sections: string[] = [];
 
+  if (settings.styleNotes) {
+    sections.push(`Preferred writing style: ${settings.styleNotes}`);
+  }
+
   if (settings.signOffOptions.length > 0) {
-    sections.push(
-      `When a sign-off is appropriate, choose the best fit from these options: ${settings.signOffOptions.join(' | ')}.`,
-    );
+    sections.push(`When a sign-off is appropriate, choose the best fit from: ${settings.signOffOptions.join(' | ')}.`);
   }
 
   if (settings.signatureBlock) {
@@ -49,89 +74,69 @@ function buildWritingPreferenceSections(settings: AssistantSettings): string[] {
   return sections;
 }
 
-export function buildChatMessages(
-  request: GenerateDraftRequest,
-  settings: AssistantSettings,
-): LlmMessage[] {
-  const transcript = request.thread.messages.map(formatMessage).join('\n\n---\n\n');
-  const safeTranscript = transcript ? trimToLimit(transcript, MAX_THREAD_CHARS) : '(no visible thread context)';
-  const safeDraft = request.currentDraft ? trimToLimit(normalizeBlock(request.currentDraft), MAX_DRAFT_CHARS) : '';
-  const styleNotes = settings.styleNotes ? `Preferred writing style: ${settings.styleNotes}` : 'Preferred writing style: clear, direct, and useful.';
-  const defaultLanguageInstruction =
-    settings.defaultLanguage === 'chinese'
-      ? 'Default email language: Chinese. Write in Chinese unless the instruction clearly asks for another language.'
-      : 'Default email language: English. Write in English unless the instruction clearly asks for another language.';
-  const actionHint =
-    request.action === 'refine'
-      ? 'Refine the current draft using the instruction and the thread context.'
-      : 'Draft a new reply or outbound message using the instruction and the thread context.';
+export function buildDraftMessages(request: DraftRequest, settings: AssistantSettings): LlmMessage[] {
+  const contexts = request.contexts.length
+    ? request.contexts.map(formatContext).join('\n\n---\n\n')
+    : '(no email context was selected)';
+  const draft = request.draft ? trimToLimit(normalizeBlock(request.draft), MAX_DRAFT_CHARS) : '';
+  const actionInstruction =
+    request.action === 'improve'
+      ? 'Improve the current draft while preserving its intent and factual content.'
+      : request.composeKind === 'reply'
+        ? 'Draft a reply to the selected email context.'
+        : 'Draft a new outbound email using only the selected context and instruction.';
 
   const systemPrompt = [
     'You are a careful email writing assistant.',
     'Return plain text only.',
     'Do not output HTML, Markdown fences, or explanations unless explicitly requested.',
-    'Do not claim actions were taken or emails were sent.',
-    'If context is incomplete, write a reasonable draft and keep assumptions minimal.',
-    defaultLanguageInstruction,
-    styleNotes,
-    ...buildWritingPreferenceSections(settings),
+    'Do not claim that an email was sent or that an action was taken.',
+    'Use only the selected email context and the user instruction.',
+    languageInstruction(settings.defaultLanguage),
+    ...writingPreferences(settings),
   ].join(' ');
 
-  const userPromptSections = [
-    `Provider: ${request.provider}`,
-    `Action: ${request.action}`,
-    `Task: ${actionHint}`,
-    `Default language: ${languageLabel(settings.defaultLanguage)}`,
+  const userSections = [
+    `Task: ${actionInstruction}`,
     `Instruction:\n${normalizeBlock(request.instruction)}`,
-    `Subject: ${request.thread.subject || '(unknown subject)'}`,
-    `Participants: ${request.thread.participants.join(', ') || '(unknown participants)'}`,
-    `Visible thread transcript:\n${safeTranscript}`,
+    `Subject on compose: ${normalizeBlock(request.subject) || '(no subject)'}`,
+    contexts,
   ];
 
-  if (safeDraft) {
-    userPromptSections.push(`Current draft:\n${safeDraft}`);
+  if (draft) {
+    userSections.push(`Current draft:\n${draft}`);
   }
 
-  userPromptSections.push('Write the email body only. Do not add a subject line unless the instruction explicitly asks for one.');
+  userSections.push('Write the email body only. Do not add a subject line.');
 
   return [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPromptSections.join('\n\n') },
+    { role: 'user', content: userSections.join('\n\n') },
   ];
 }
 
-export function buildSubjectMessages(
-  request: GenerateDraftRequest,
-  draftBody: string,
-  settings: AssistantSettings,
-): LlmMessage[] {
-  const safeDraft = trimToLimit(normalizeBlock(draftBody), MAX_DRAFT_CHARS);
-  const transcript = request.thread.messages.map(formatMessage).join('\n\n---\n\n');
-  const safeTranscript = transcript ? trimToLimit(transcript, MAX_THREAD_CHARS) : '(no visible thread context)';
-  const languageInstruction =
-    settings.defaultLanguage === 'chinese'
-      ? 'Write the subject in Chinese unless the instruction clearly asks for another language.'
-      : 'Write the subject in English unless the instruction clearly asks for another language.';
+export function buildSubjectMessages(request: DraftRequest, draftBody: string, settings: AssistantSettings): LlmMessage[] {
+  const contexts = request.contexts.length
+    ? request.contexts.map(formatContext).join('\n\n---\n\n')
+    : '(no email context was selected)';
 
   return [
     {
       role: 'system',
       content: [
         'You write concise email subject lines.',
-        'Return only the subject line text.',
-        'Do not include quotes, bullets, numbering, or a `Subject:` label.',
-        'Do not add Re:, Fwd:, or similar prefixes.',
-        languageInstruction,
+        'Return only one subject line.',
+        'Do not include quotes, bullets, numbering, or a Subject label.',
+        'Do not add Re: or Fwd: prefixes.',
+        languageInstruction(settings.defaultLanguage),
       ].join(' '),
     },
     {
       role: 'user',
       content: [
-        `Provider: ${request.provider}`,
         `Instruction:\n${normalizeBlock(request.instruction)}`,
-        `Participants: ${request.thread.participants.join(', ') || '(unknown participants)'}`,
-        `Visible thread transcript:\n${safeTranscript}`,
-        `Generated email body:\n${safeDraft}`,
+        `Selected context:\n${contexts}`,
+        `Generated email body:\n${trimToLimit(normalizeBlock(draftBody), MAX_DRAFT_CHARS)}`,
         'Write one concise subject line for this new outbound email.',
       ].join('\n\n'),
     },

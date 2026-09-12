@@ -1,5 +1,13 @@
-import { SETTINGS_STORAGE_KEY, getDefaultSettings } from './constants';
+import { getDefaultSettings, SETTINGS_STORAGE_KEY } from './constants';
 import type { AssistantSettings, AssistantSettingsExport, EmailLanguage } from './types';
+
+function normalizeBaseUrl(candidate: unknown, fallback: string): string {
+  if (typeof candidate !== 'string' || !candidate.trim()) {
+    return fallback;
+  }
+
+  return candidate.trim().replace(/\/+$/, '');
+}
 
 function normalizeTemperature(candidate: unknown, fallback: number): number {
   if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
@@ -37,14 +45,13 @@ export function normalizeSettings(candidate?: Partial<AssistantSettings> | null)
   const defaults = getDefaultSettings();
 
   return {
-    endpoint: typeof candidate?.endpoint === 'string' ? candidate.endpoint.trim() : defaults.endpoint,
+    baseUrl: normalizeBaseUrl(candidate?.baseUrl, defaults.baseUrl),
     model: typeof candidate?.model === 'string' ? candidate.model.trim() : defaults.model,
     temperature: normalizeTemperature(candidate?.temperature, defaults.temperature),
     styleNotes: typeof candidate?.styleNotes === 'string' ? candidate.styleNotes.trim() : defaults.styleNotes,
-    apiKey: typeof candidate?.apiKey === 'string' ? candidate.apiKey.trim() : defaults.apiKey,
     defaultLanguage: normalizeLanguage(candidate?.defaultLanguage, defaults.defaultLanguage),
-    generatePresets: normalizePresetList(candidate?.generatePresets, defaults.generatePresets),
-    refinePresets: normalizePresetList(candidate?.refinePresets, defaults.refinePresets),
+    draftPresets: normalizePresetList(candidate?.draftPresets, defaults.draftPresets),
+    improvePresets: normalizePresetList(candidate?.improvePresets, defaults.improvePresets),
     signOffOptions: normalizePresetList(candidate?.signOffOptions, defaults.signOffOptions),
     signatureBlock:
       typeof candidate?.signatureBlock === 'string' ? candidate.signatureBlock.trim() : defaults.signatureBlock,
@@ -53,7 +60,7 @@ export function normalizeSettings(candidate?: Partial<AssistantSettings> | null)
 
 export function serializeSettingsExport(candidate: AssistantSettings, exportedAt = new Date().toISOString()): string {
   const payload = {
-    version: 1,
+    version: 2,
     exportedAt,
     settings: normalizeSettings(candidate),
   } satisfies AssistantSettingsExport;
@@ -71,7 +78,6 @@ export function parseSettingsImport(text: string): AssistantSettings {
   }
 
   const candidate = isRecord(parsed) && 'settings' in parsed ? parsed.settings : parsed;
-
   if (!isRecord(candidate)) {
     throw new Error('Imported file does not contain valid settings.');
   }

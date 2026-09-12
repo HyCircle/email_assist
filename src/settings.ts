@@ -1,300 +1,220 @@
 import './settings.css';
 
-import { getDefaultSettings } from './constants';
+import { COMMON_MODELS } from './constants';
 import { getEndpointOriginPattern } from './llm';
 import { getSettings, parseSettingsImport, resetSettings, saveSettings, serializeSettingsExport } from './storage';
-import type { AssistantSettings } from './types';
+import type { AssistantSettings, TestConnectionResponse } from './types';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
-function formatPresetList(values: string[]): string {
-  return values.join('\n');
-}
-
-function parsePresetList(value: string): string[] {
+function parseList(value: string): string[] {
   return value
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter(Boolean);
 }
 
-function toErrorMessage(error: unknown, fallback: string): string {
+function listValue(values: string[]): string {
+  return values.join('\n');
+}
+
+function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function downloadTextFile(fileName: string, text: string): void {
+function downloadSettings(text: string): void {
   const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
   const link = document.createElement('a');
   link.href = url;
-  link.download = fileName;
+  link.download = `email-assistant-settings-${new Date().toISOString().replace(/:/g, '-')}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }
 
-function buildExportFileName(): string {
-  return `email-assistant-settings-${new Date().toISOString().replace(/[:]/g, '-')}.json`;
-}
+function buildLayout(): void {
+  if (!app) return;
 
-function buildLayout(defaultSettings: AssistantSettings): string {
-  const safeDefaults = {
-    endpoint: defaultSettings.endpoint || '(empty)',
-    model: defaultSettings.model || '(empty)',
-    temperature: String(defaultSettings.temperature),
-    defaultLanguage: defaultSettings.defaultLanguage === 'chinese' ? 'Chinese' : 'English',
-  };
-
-  return `
+  app.innerHTML = `
     <main class="settings-shell">
-      <section class="settings-hero">
+      <header class="settings-hero">
         <p class="settings-kicker">Email Assistant</p>
-        <h1>Local-first config for Gmail and Outlook Web</h1>
-        <p class="settings-copy">
-          Runtime settings are stored in Chrome storage. Build defaults come from your local <code>.env.local</code>,
-          so the repo can stay public without baking private endpoints into tracked files.
-        </p>
-        <dl class="settings-defaults">
-          <div>
-            <dt>Default endpoint</dt>
-            <dd>${safeDefaults.endpoint}</dd>
-          </div>
-          <div>
-            <dt>Default model</dt>
-            <dd>${safeDefaults.model}</dd>
-          </div>
-          <div>
-            <dt>Default temperature</dt>
-            <dd>${safeDefaults.temperature}</dd>
-          </div>
-          <div>
-            <dt>Default language</dt>
-            <dd>${safeDefaults.defaultLanguage}</dd>
-          </div>
-        </dl>
-      </section>
-
+        <h1>Local writing help for Gmail and Outlook</h1>
+        <p>Configure the local llama.cpp connection and the writing defaults used by Draft and Improve.</p>
+      </header>
       <form class="settings-card" id="settings-form">
-        <label>
-          <span>API endpoint</span>
-          <input id="endpoint" name="endpoint" type="url" placeholder="http://localhost:8070/v1/chat/completions" required />
-        </label>
+        <section class="settings-section">
+          <div class="settings-section-heading"><h2>Connection</h2><span id="permission-status" class="settings-badge">Checking…</span></div>
+          <label><span>Base URL</span><input id="base-url" name="base-url" type="url" required /></label>
+          <label><span>Model</span><select id="model-choice" name="model-choice"></select></label>
+          <label id="custom-model-field" hidden><span>Custom model</span><input id="custom-model" name="custom-model" type="text" /></label>
+          <label><span>Temperature</span><input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" required /></label>
+          <div class="settings-actions"><button type="button" id="test-connection">Test connection</button></div>
+          <p class="settings-note">Requests use <code>/chat/completions</code> under this base URL and never stream. Saving a custom endpoint asks Chrome for access to that endpoint origin.</p>
+        </section>
 
-        <label>
-          <span>Model name</span>
-          <input id="model" name="model" type="text" placeholder="Qwen3.6-35B-A3B-Q4_K_S-Agent" required />
-        </label>
+        <section class="settings-section">
+          <div class="settings-section-heading"><h2>Writing defaults</h2></div>
+          <label><span>Default language</span><select id="language" name="language"><option value="english">English</option><option value="chinese">Chinese</option></select></label>
+          <label><span>Style notes</span><textarea id="style-notes" name="style-notes" rows="3" placeholder="Concise, warm, and direct."></textarea></label>
+          <label><span>Sign-off options</span><textarea id="sign-offs" name="sign-offs" rows="3" placeholder="One option per line."></textarea></label>
+          <label><span>Signature block</span><textarea id="signature" name="signature" rows="3" placeholder="Optional fixed signature text."></textarea></label>
+        </section>
 
-        <label>
-          <span>Temperature</span>
-          <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" required />
-        </label>
+        <section class="settings-section settings-preset-grid">
+          <div><h2>Draft presets</h2><textarea id="draft-presets" rows="6" placeholder="One instruction per line."></textarea><p class="settings-note">Shown before the first draft.</p></div>
+          <div><h2>Improve presets</h2><textarea id="improve-presets" rows="6" placeholder="One instruction per line."></textarea><p class="settings-note">Shown after a draft exists.</p></div>
+        </section>
 
-        <label>
-          <span>Default email language</span>
-          <select id="defaultLanguage" name="defaultLanguage">
-            <option value="english">English</option>
-            <option value="chinese">Chinese</option>
-          </select>
-        </label>
+        <section class="settings-section settings-advanced">
+          <div class="settings-section-heading"><h2>Advanced</h2><span>Transfer or restore settings</span></div>
+          <div class="settings-actions"><button type="button" id="export-button">Export</button><button type="button" id="import-button">Import</button><button type="button" id="reset-button">Restore defaults</button></div>
+          <input id="import-file" type="file" accept="application/json,.json" hidden />
+        </section>
 
-        <div class="settings-presets">
-          <label>
-            <span>Generate presets</span>
-            <textarea id="generatePresets" name="generatePresets" rows="5" placeholder="One preset per line."></textarea>
-            <small class="settings-note">One preset per line. Choosing a Generate preset from the panel runs it immediately.</small>
-          </label>
-
-          <label>
-            <span>Refine presets</span>
-            <textarea id="refinePresets" name="refinePresets" rows="5" placeholder="One preset per line."></textarea>
-            <small class="settings-note">One preset per line. Choosing a Refine preset from the panel runs it immediately.</small>
-          </label>
-
-          <label>
-            <span>Sign-off options</span>
-            <textarea id="signOffOptions" name="signOffOptions" rows="5" placeholder="One sign-off per line, such as Thanks, or Best regards,"></textarea>
-            <small class="settings-note">One option per line. The model will choose the best fit for the email.</small>
-          </label>
-
-          <label>
-            <span>Signature block</span>
-            <textarea id="signatureBlock" name="signatureBlock" rows="5" placeholder="Your name, title, phone, or any fixed signature text."></textarea>
-            <small class="settings-note">This block is appended after the chosen sign-off unless you ask the model not to include it.</small>
-          </label>
-        </div>
-
-        <label>
-          <span>Style notes</span>
-          <textarea id="styleNotes" name="styleNotes" rows="5" placeholder="Optional guidance such as concise, warm, and direct."></textarea>
-        </label>
-
-        <label>
-          <span>API key</span>
-          <input id="apiKey" name="apiKey" type="password" placeholder="Leave blank for llama.cpp or other local servers." />
-        </label>
-
-        <div class="settings-actions">
-          <button type="submit" class="primary">Save settings</button>
-          <button type="button" id="reset-button">Reset to build defaults</button>
-          <button type="button" id="permission-button">Grant endpoint access</button>
-          <button type="button" id="export-button">Export settings</button>
-          <button type="button" id="import-button">Import settings</button>
-        </div>
-
-        <input id="import-file" type="file" accept="application/json,.json" hidden />
-
-        <p class="settings-status" id="status" role="status">Ready.</p>
+        <div class="settings-submit"><button type="submit" class="primary">Save settings</button><p id="status" class="settings-status" role="status">Ready.</p></div>
       </form>
-    </main>
-  `;
+    </main>`;
 }
 
-function setFormValues(form: HTMLFormElement, settings: AssistantSettings): void {
-  (form.elements.namedItem('endpoint') as HTMLInputElement).value = settings.endpoint;
-  (form.elements.namedItem('model') as HTMLInputElement).value = settings.model;
-  (form.elements.namedItem('temperature') as HTMLInputElement).value = String(settings.temperature);
-  (form.elements.namedItem('defaultLanguage') as HTMLSelectElement).value = settings.defaultLanguage;
-  (form.elements.namedItem('generatePresets') as HTMLTextAreaElement).value = formatPresetList(settings.generatePresets);
-  (form.elements.namedItem('refinePresets') as HTMLTextAreaElement).value = formatPresetList(settings.refinePresets);
-  (form.elements.namedItem('signOffOptions') as HTMLTextAreaElement).value = formatPresetList(settings.signOffOptions);
-  (form.elements.namedItem('signatureBlock') as HTMLTextAreaElement).value = settings.signatureBlock;
-  (form.elements.namedItem('styleNotes') as HTMLTextAreaElement).value = settings.styleNotes;
-  (form.elements.namedItem('apiKey') as HTMLInputElement).value = settings.apiKey;
+function setupModelOptions(): void {
+  const select = document.querySelector<HTMLSelectElement>('#model-choice');
+  if (!select) return;
+  select.replaceChildren(...COMMON_MODELS.map((model) => new Option(model, model)), new Option('Custom model', 'custom'));
+  select.addEventListener('change', () => {
+    const customField = document.querySelector<HTMLElement>('#custom-model-field');
+    if (customField) customField.hidden = select.value !== 'custom';
+  });
 }
 
-function readFormValues(form: HTMLFormElement): AssistantSettings {
+function setFormValues(settings: AssistantSettings): void {
+  const modelChoice = document.querySelector<HTMLSelectElement>('#model-choice');
+  const customField = document.querySelector<HTMLElement>('#custom-model-field');
+  const customModel = document.querySelector<HTMLInputElement>('#custom-model');
+  if (!modelChoice || !customField || !customModel) return;
+
+  modelChoice.value = COMMON_MODELS.includes(settings.model) ? settings.model : 'custom';
+  customField.hidden = modelChoice.value !== 'custom';
+  customModel.value = COMMON_MODELS.includes(settings.model) ? '' : settings.model;
+  (document.querySelector<HTMLInputElement>('#base-url')!).value = settings.baseUrl;
+  (document.querySelector<HTMLInputElement>('#temperature')!).value = String(settings.temperature);
+  (document.querySelector<HTMLSelectElement>('#language')!).value = settings.defaultLanguage;
+  (document.querySelector<HTMLTextAreaElement>('#style-notes')!).value = settings.styleNotes;
+  (document.querySelector<HTMLTextAreaElement>('#sign-offs')!).value = listValue(settings.signOffOptions);
+  (document.querySelector<HTMLTextAreaElement>('#signature')!).value = settings.signatureBlock;
+  (document.querySelector<HTMLTextAreaElement>('#draft-presets')!).value = listValue(settings.draftPresets);
+  (document.querySelector<HTMLTextAreaElement>('#improve-presets')!).value = listValue(settings.improvePresets);
+}
+
+function readFormValues(): AssistantSettings {
+  const modelChoice = document.querySelector<HTMLSelectElement>('#model-choice')!;
+  const customModel = document.querySelector<HTMLInputElement>('#custom-model')!;
   return {
-    endpoint: (form.elements.namedItem('endpoint') as HTMLInputElement).value.trim(),
-    model: (form.elements.namedItem('model') as HTMLInputElement).value.trim(),
-    temperature: Number.parseFloat((form.elements.namedItem('temperature') as HTMLInputElement).value),
-    defaultLanguage: (form.elements.namedItem('defaultLanguage') as HTMLSelectElement).value === 'chinese' ? 'chinese' : 'english',
-    generatePresets: parsePresetList((form.elements.namedItem('generatePresets') as HTMLTextAreaElement).value),
-    refinePresets: parsePresetList((form.elements.namedItem('refinePresets') as HTMLTextAreaElement).value),
-    signOffOptions: parsePresetList((form.elements.namedItem('signOffOptions') as HTMLTextAreaElement).value),
-    signatureBlock: (form.elements.namedItem('signatureBlock') as HTMLTextAreaElement).value.trim(),
-    styleNotes: (form.elements.namedItem('styleNotes') as HTMLTextAreaElement).value.trim(),
-    apiKey: (form.elements.namedItem('apiKey') as HTMLInputElement).value.trim(),
+    baseUrl: document.querySelector<HTMLInputElement>('#base-url')!.value.trim(),
+    model: (modelChoice.value === 'custom' ? customModel.value : modelChoice.value).trim(),
+    temperature: Number.parseFloat(document.querySelector<HTMLInputElement>('#temperature')!.value),
+    defaultLanguage: document.querySelector<HTMLSelectElement>('#language')!.value === 'chinese' ? 'chinese' : 'english',
+    styleNotes: document.querySelector<HTMLTextAreaElement>('#style-notes')!.value.trim(),
+    signOffOptions: parseList(document.querySelector<HTMLTextAreaElement>('#sign-offs')!.value),
+    signatureBlock: document.querySelector<HTMLTextAreaElement>('#signature')!.value.trim(),
+    draftPresets: parseList(document.querySelector<HTMLTextAreaElement>('#draft-presets')!.value),
+    improvePresets: parseList(document.querySelector<HTMLTextAreaElement>('#improve-presets')!.value),
   };
 }
 
-async function ensureEndpointAccess(endpoint: string): Promise<string> {
-  const originPattern = getEndpointOriginPattern(endpoint);
+async function ensureEndpointAccess(baseUrl: string): Promise<string> {
+  const pattern = getEndpointOriginPattern(baseUrl);
+  if (!pattern) throw new Error('Base URL must be a valid http or https URL.');
+  if (await chrome.permissions.contains({ origins: [pattern] })) return 'Endpoint access is ready.';
+  if (!(await chrome.permissions.request({ origins: [pattern] }))) throw new Error('Endpoint permission was not granted.');
+  return 'Endpoint access granted.';
+}
 
-  if (!originPattern) {
-    throw new Error('Endpoint must be a valid http or https URL.');
-  }
-
-  const alreadyGranted = await chrome.permissions.contains({ origins: [originPattern] });
-
-  if (alreadyGranted) {
-    return 'Endpoint access already granted.';
-  }
-
-  const granted = await chrome.permissions.request({ origins: [originPattern] });
-
-  if (!granted) {
-    throw new Error('Endpoint permission was not granted.');
-  }
-
-  return 'Endpoint permission granted.';
+async function updatePermissionStatus(baseUrl: string): Promise<void> {
+  const status = document.querySelector<HTMLSpanElement>('#permission-status');
+  if (!status) return;
+  const pattern = getEndpointOriginPattern(baseUrl);
+  const ready = Boolean(pattern && (await chrome.permissions.contains({ origins: [pattern] })));
+  status.textContent = ready ? 'Access ready' : 'Access needed';
+  status.dataset.ready = String(ready);
 }
 
 async function main(): Promise<void> {
-  if (!app) {
-    return;
-  }
+  if (!app) return;
+  buildLayout();
+  setupModelOptions();
 
-  const defaultSettings = getDefaultSettings();
-  app.innerHTML = buildLayout(defaultSettings);
+  const status = document.querySelector<HTMLParagraphElement>('#status')!;
+  const form = document.querySelector<HTMLFormElement>('#settings-form')!;
+  const current = await getSettings();
+  setFormValues(current);
+  await updatePermissionStatus(current.baseUrl);
 
-  const form = document.querySelector<HTMLFormElement>('#settings-form');
-  const status = document.querySelector<HTMLParagraphElement>('#status');
-  const resetButton = document.querySelector<HTMLButtonElement>('#reset-button');
-  const permissionButton = document.querySelector<HTMLButtonElement>('#permission-button');
-  const exportButton = document.querySelector<HTMLButtonElement>('#export-button');
-  const importButton = document.querySelector<HTMLButtonElement>('#import-button');
-  const importFileInput = document.querySelector<HTMLInputElement>('#import-file');
-
-  if (!form || !status || !resetButton || !permissionButton || !exportButton || !importButton || !importFileInput) {
-    return;
-  }
-
-  setFormValues(form, await getSettings());
+  document.querySelector<HTMLInputElement>('#base-url')!.addEventListener('input', () => {
+    void updatePermissionStatus(document.querySelector<HTMLInputElement>('#base-url')!.value.trim());
+  });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    status.textContent = 'Saving settings...';
-
+    status.textContent = 'Saving…';
     try {
-      const settings = readFormValues(form);
-      await ensureEndpointAccess(settings.endpoint);
-      const savedSettings = await saveSettings(settings);
-      setFormValues(form, savedSettings);
+      const values = readFormValues();
+      if (!values.baseUrl || !values.model) throw new Error('Base URL and model are required.');
+      await ensureEndpointAccess(values.baseUrl);
+      setFormValues(await saveSettings(values));
+      await updatePermissionStatus(values.baseUrl);
       status.textContent = 'Settings saved.';
     } catch (error) {
-      status.textContent = toErrorMessage(error, 'Could not save settings.');
+      status.textContent = errorMessage(error, 'Could not save settings.');
     }
   });
 
-  resetButton.addEventListener('click', async () => {
-    status.textContent = 'Restoring build defaults...';
-
+  document.querySelector<HTMLButtonElement>('#test-connection')!.addEventListener('click', async () => {
+    status.textContent = 'Testing connection…';
     try {
-      const restored = await resetSettings();
-      setFormValues(form, restored);
-      status.textContent = 'Build defaults restored.';
+      const baseUrl = document.querySelector<HTMLInputElement>('#base-url')!.value.trim();
+      if (!baseUrl) throw new Error('Base URL is required.');
+      await ensureEndpointAccess(baseUrl);
+      const response = (await chrome.runtime.sendMessage({
+        type: 'email-assist:test-connection',
+        baseUrl,
+      })) as TestConnectionResponse | undefined;
+      if (!response?.ok) throw new Error(response?.error || 'Connection failed.');
+      status.textContent = 'Connection successful.';
     } catch (error) {
-      status.textContent = toErrorMessage(error, 'Could not reset settings.');
+      status.textContent = errorMessage(error, 'Could not test the connection.');
     }
   });
 
-  permissionButton.addEventListener('click', async () => {
-    status.textContent = 'Requesting endpoint permission...';
+  document.querySelector<HTMLButtonElement>('#reset-button')!.addEventListener('click', async () => {
+    const restored = await resetSettings();
+    setFormValues(restored);
+    await updatePermissionStatus(restored.baseUrl);
+    status.textContent = 'Defaults restored.';
+  });
 
+  document.querySelector<HTMLButtonElement>('#export-button')!.addEventListener('click', () => {
+    downloadSettings(serializeSettingsExport(readFormValues()));
+    status.textContent = 'Settings exported.';
+  });
+
+  const fileInput = document.querySelector<HTMLInputElement>('#import-file')!;
+  document.querySelector<HTMLButtonElement>('#import-button')!.addEventListener('click', () => {
+    fileInput.value = '';
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
     try {
-      const settings = readFormValues(form);
-      status.textContent = await ensureEndpointAccess(settings.endpoint);
-    } catch (error) {
-      status.textContent = toErrorMessage(error, 'Could not request endpoint access.');
-    }
-  });
-
-  exportButton.addEventListener('click', () => {
-    try {
-      const settings = readFormValues(form);
-      downloadTextFile(buildExportFileName(), serializeSettingsExport(settings));
-      status.textContent = 'Settings exported.';
-    } catch (error) {
-      status.textContent = toErrorMessage(error, 'Could not export settings.');
-    }
-  });
-
-  importButton.addEventListener('click', () => {
-    importFileInput.value = '';
-    importFileInput.click();
-  });
-
-  importFileInput.addEventListener('change', async () => {
-    const file = importFileInput.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    status.textContent = 'Importing settings...';
-
-    try {
-      const importedSettings = parseSettingsImport(await file.text());
-
-      if (importedSettings.endpoint) {
-        await ensureEndpointAccess(importedSettings.endpoint);
-      }
-
-      const savedSettings = await saveSettings(importedSettings);
-      setFormValues(form, savedSettings);
+      const imported = parseSettingsImport(await file.text());
+      await ensureEndpointAccess(imported.baseUrl);
+      setFormValues(await saveSettings(imported));
+      await updatePermissionStatus(imported.baseUrl);
       status.textContent = 'Settings imported.';
     } catch (error) {
-      status.textContent = toErrorMessage(error, 'Could not import settings.');
+      status.textContent = errorMessage(error, 'Could not import settings.');
     } finally {
-      importFileInput.value = '';
+      fileInput.value = '';
     }
   });
 }

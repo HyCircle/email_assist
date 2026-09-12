@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "strict": true,
-    "types": ["chrome", "vite/client", "vitest/globals"]
+    "types": ["chrome", "vite/client"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts"]
 }

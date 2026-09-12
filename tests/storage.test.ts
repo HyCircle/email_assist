@@ -2,52 +2,40 @@ import { describe, expect, it } from 'vitest';
 
 import { normalizeSettings, parseSettingsImport, serializeSettingsExport } from '../src/storage';
 
-describe('normalizeSettings', () => {
-  it('normalizes language and presets', () => {
+describe('settings contract', () => {
+  it('uses the in-code defaults when nothing is stored', () => {
+    const settings = normalizeSettings(undefined);
+    expect(settings.baseUrl).toBe('http://pc-yh:8070/v1');
+    expect(settings.model).toBe('Qwen3.8-27B-Q4');
+    expect(settings.temperature).toBe(0.2);
+  });
+
+  it('normalizes the base URL and writing lists', () => {
     const settings = normalizeSettings({
-      endpoint: ' http://localhost:8070/v1/chat/completions ',
+      baseUrl: ' http://pc-yh:8070/v1/// ',
       model: ' Qwen ',
       temperature: 3,
       styleNotes: ' Warm and concise. ',
-      apiKey: ' ',
       defaultLanguage: 'chinese',
-      generatePresets: ['  Draft a polite reply. ', '', 'Draft a polite reply.'],
-      refinePresets: [' Rewrite shorter. ', ''],
+      draftPresets: ['  Draft a polite reply. ', '', 'Draft a polite reply.'],
+      improvePresets: [' Rewrite shorter. ', ''],
       signOffOptions: [' Thanks, ', '', 'Best regards,'],
       signatureBlock: ' Yuncheng Hao\nUIC ',
     });
 
-    expect(settings.endpoint).toBe('http://localhost:8070/v1/chat/completions');
-    expect(settings.model).toBe('Qwen');
+    expect(settings.baseUrl).toBe('http://pc-yh:8070/v1');
     expect(settings.temperature).toBe(2);
     expect(settings.defaultLanguage).toBe('chinese');
-    expect(settings.generatePresets).toEqual(['Draft a polite reply.']);
-    expect(settings.refinePresets).toEqual(['Rewrite shorter.']);
+    expect(settings.draftPresets).toEqual(['Draft a polite reply.']);
+    expect(settings.improvePresets).toEqual(['Rewrite shorter.']);
     expect(settings.signOffOptions).toEqual(['Thanks,', 'Best regards,']);
-    expect(settings.signatureBlock).toBe('Yuncheng Hao\nUIC');
   });
 
-  it('serializes and parses exported settings payloads', () => {
-    const source = normalizeSettings({
-      endpoint: 'http://localhost:8070/v1/chat/completions',
-      model: 'Qwen',
-      temperature: 0.4,
-      styleNotes: 'Direct and warm.',
-      apiKey: '',
-      defaultLanguage: 'english',
-      generatePresets: ['Draft a concise reply.'],
-      refinePresets: ['Rewrite shorter.'],
-      signOffOptions: ['Thanks,'],
-      signatureBlock: 'Yuncheng Hao',
-    });
-
+  it('serializes and parses the versioned settings contract', () => {
+    const source = normalizeSettings({ baseUrl: 'http://pc-yh:8070/v1', model: 'Qwen', temperature: 0.4, styleNotes: 'Direct.', defaultLanguage: 'english', draftPresets: ['Draft.'], improvePresets: ['Improve.'], signOffOptions: ['Thanks,'], signatureBlock: 'Yuncheng Hao' });
     const serialized = serializeSettingsExport(source, '2026-05-01T00:00:00.000Z');
     const parsed = parseSettingsImport(serialized);
-
-    expect(JSON.parse(serialized)).toMatchObject({
-      version: 1,
-      exportedAt: '2026-05-01T00:00:00.000Z',
-    });
+    expect(JSON.parse(serialized)).toMatchObject({ version: 2, exportedAt: '2026-05-01T00:00:00.000Z' });
     expect(parsed).toEqual(source);
   });
 });

@@ -2,29 +2,23 @@ import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  extractOutlookThreadContext,
+  extractOutlookCurrentContext,
   findOutlookComposeEditors,
+  getOutlookComposeKind,
+  getOutlookComposeMountForAssistant,
   insertPlainTextIntoOutlook,
   readPlainTextFromOutlookEditor,
 } from '../src/outlook-dom';
 
-function installDom(html: string, url: string) {
+function installDom(html: string, url: string): void {
   const dom = new JSDOM(html, { url });
   vi.stubGlobal('window', dom.window);
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('HTMLElement', dom.window.HTMLElement);
+  vi.stubGlobal('InputEvent', dom.window.InputEvent);
   vi.spyOn(dom.window.HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
-    width: 320,
-    height: 120,
-    top: 0,
-    left: 0,
-    right: 320,
-    bottom: 120,
-    x: 0,
-    y: 0,
-    toJSON: () => ({}),
+    width: 320, height: 120, top: 0, left: 0, right: 320, bottom: 120, x: 0, y: 0, toJSON: () => ({}),
   }));
-  return dom;
 }
 
 afterEach(() => {
@@ -32,85 +26,142 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('outlook-dom', () => {
-  it('finds compose editors and extracts reading pane content in reply mode', () => {
-    installDom(
-      `
-        <div role="heading" class="screenReaderOnly">Navigation pane</div>
-        <section>
-          <div aria-label="Message body" role="textbox" contenteditable="true">Draft body</div>
-        </section>
-        <div>
-          From: ois@uic.edu &lt;ois@uic.edu&gt;
-          Sent: Tuesday, August 26, 2025 10:19 AM
-          To: yhao24@uic.edu &lt;yhao24@uic.edu&gt;
-          Subject: Quarterly update
-          <table>
-            <tr>
-              <td>
-                <h1>Office of International Services</h1>
-                <h1>Quarterly update</h1>
-                <p>Please confirm whether Tuesday still works.</p>
-              </td>
-            </tr>
-          </table>
+const outlookComposeShell = `
+  <div data-app-section="MailReadCompose">
+    <div id="docking_InitVisiblePart_0">
+      <div class="surface">
+        <div class="action-row">
+          <div><div><button aria-label="Send">Send</button></div></div>
+          <button aria-label="Discard">Discard</button>
         </div>
-      `,
-      'https://outlook.live.com/mail/inbox/id/example',
-    );
+        <div class="fields">
+          <input aria-label="Subject" id="MSG_1_SUBJECT" value="">
+        </div>
+        <div id="docking_DockingTriggerPart_0">
+          <div aria-label="Message body" contenteditable="true"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
 
-    const editors = findOutlookComposeEditors(document);
-    const thread = extractOutlookThreadContext(document);
-
-    expect(editors).toHaveLength(1);
-    expect(readPlainTextFromOutlookEditor(editors[0])).toContain('Draft body');
-    expect(thread.subject).toBe('Quarterly update');
-    expect(thread.messages[0]?.body).toContain('Tuesday still works');
-    expect(thread.messages[0]?.sender).toContain('ois@uic.edu');
-    expect(thread.participants).toContain('ois@uic.edu');
-    expect(thread.participants).toContain('yhao24@uic.edu');
-  });
-
-  it('does not treat the Outlook page title as a thread subject for a brand new compose', () => {
-    installDom(
-      `
-        <section>
-          <input aria-label="Subject" value="" />
-          <div aria-label="Message body" role="textbox" contenteditable="true"></div>
-        </section>
-      `,
-      'https://outlook.live.com/mail/',
-    );
-
-    document.title = 'Mail - User Name - Outlook';
-
-    const thread = extractOutlookThreadContext(document);
-
-    expect(thread.subject).toBe('');
-    expect(thread.messages).toEqual([]);
-  });
-
-  it('preserves quoted reply content when inserting a generated draft', () => {
-    installDom(
-      `
-        <section>
-          <div aria-label="Message body" role="textbox" contenteditable="true">
-            <div class="elementToProof"><br></div>
-            <div class="_Entity _EType_OWA_VirtualEdit_Placeholder"><br></div>
-            <div>From: ois@uic.edu &lt;ois@uic.edu&gt;</div>
-            <div>Sent: Tuesday, August 26, 2025 10:19 AM</div>
-            <div>Original quoted reply body.</div>
-          </div>
-        </section>
-      `,
-      'https://outlook.live.com/mail/inbox/id/example',
-    );
+describe('outlook-dom', () => {
+  it('identifies a new Outlook compose and does not scrape page chrome as context', () => {
+    installDom(`
+      <div title="Inbox navigation">Ignore this UI email@example.com</div>
+      ${outlookComposeShell}
+    `, 'https://outlook.office.com/mail/');
 
     const editor = findOutlookComposeEditors(document)[0];
-    insertPlainTextIntoOutlook(editor, 'Thanks for the update.\n\nBest regards,');
+    expect(getOutlookComposeKind(editor)).toBe('new');
+    expect(extractOutlookCurrentContext(document, editor)).toBeNull();
+  });
 
-    expect(editor.textContent).toContain('Thanks for the update.');
+  it('extracts a structured Outlook reading pane without scanning page UI', () => {
+    installDom(`
+      <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">
+        <span id="CONV_123_SUBJECT" role="heading" aria-level="3">Quarterly update</span>
+        <div aria-label="Email message">
+          <span aria-label="From: ois@uic.edu &lt;ois@uic.edu&gt;"></span>
+          <div data-testid="SentReceivedSavedTime">Tuesday, August 26, 2025 10:19 AM</div>
+          <div role="document" aria-label="Message body">Please confirm whether Tuesday still works.</div>
+        </div>
+      </div></main>
+      <div title="Inbox navigation">Ignore this UI email@example.com</div>
+    `, 'https://outlook.office.com/mail/inbox/id/example');
+
+    const context = extractOutlookCurrentContext(document);
+    expect(context?.subject).toBe('Quarterly update');
+    expect(context?.messages[0]?.body).toContain('Tuesday still works');
+    expect(context?.messages[0]?.sender).toContain('ois@uic.edu');
+    expect(context?.participants).toContain('ois@uic.edu');
+    expect(context?.participants).not.toContain('email@example.com');
+  });
+
+  it('returns no reading-pane context when message bodies are not structured', () => {
+    installDom(`
+      <main id="ReadingPaneContainerId">From: chrome@outlook Whole pane dump email@example.com</main>
+      ${outlookComposeShell}
+    `, 'https://outlook.office.com/mail/');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(extractOutlookCurrentContext(document, editor)).toBeNull();
+  });
+
+  it('does not treat the compose subject input as a reading-pane subject', () => {
+    installDom(`
+      <main id="ReadingPaneContainerId"></main>
+      ${outlookComposeShell}
+    `, 'https://outlook.live.com/mail/compose/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(extractOutlookCurrentContext(document, editor)).toBeNull();
+  });
+
+  it('keeps the quoted reply when replacing the assistant-managed draft block', () => {
+    installDom(`<section><div aria-label="Message body" contenteditable="true"><div data-email-assist-draft="true">Old assistant draft</div><div>From: ois@uic.edu</div><div>Original quoted reply body.</div></div></section>`, 'https://outlook.live.com/mail/inbox/id/example');
+    const editor = findOutlookComposeEditors(document)[0];
+    insertPlainTextIntoOutlook(editor, 'Thanks for the update.');
+    expect(readPlainTextFromOutlookEditor(editor)).toContain('Thanks for the update.');
     expect(editor.textContent).toContain('Original quoted reply body.');
-    expect(editor.querySelector('[data-email-assist-draft="true"]')?.textContent).toContain('Best regards');
+    expect(editor.querySelector('[data-email-assist-draft="true"]')?.textContent).toContain('Thanks');
+  });
+
+  it('does not treat Outlook quoted reply content as the current draft', () => {
+    installDom(`<div><div aria-label="Message body" contenteditable="true">
+      <div></div><hr><div id="divRplyFwdMsg">From: ois@uic.edu\nSubject: Campus update</div>
+      <div>Quoted body should not become the draft.</div>
+    </div></div>`, 'https://outlook.live.com/mail/compose/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(readPlainTextFromOutlookEditor(editor)).toBe('');
+  });
+
+  it('extracts quoted reply context from the Outlook compose surface', () => {
+    installDom(`
+      <div data-app-section="MailReadCompose">
+        <input aria-label="Subject" value="Re: Campus update">
+        <div aria-label="Message body" contenteditable="true">
+          <div></div>
+          <div id="divRplyFwdMsg">From: ois@uic.edu &lt;ois@uic.edu&gt;<br>Sent: Tuesday, August 26, 2025 10:19 AM<br>To: yhao24@uic.edu &lt;yhao24@uic.edu&gt;<br>Subject: Campus update</div>
+          <div>Please confirm whether Tuesday still works.</div>
+        </div>
+      </div>
+    `, 'https://outlook.live.com/mail/inbox/id/example');
+
+    const context = extractOutlookCurrentContext(document);
+    expect(context?.subject).toBe('Campus update');
+    expect(context?.messages[0]?.body).toContain('Tuesday still works');
+    expect(context?.participants).toEqual(expect.arrayContaining(['ois@uic.edu', 'yhao24@uic.edu']));
+  });
+
+  it('classifies an Outlook reply from its quoted reply marker', () => {
+    installDom(`
+      <div data-app-section="MailReadCompose">
+        <input aria-label="Subject" value="Re: Campus update">
+        <div aria-label="Message body" contenteditable="true"><div id="divRplyFwdMsg">From: ois@uic.edu<br>Subject: Campus update</div></div>
+      </div>
+    `, 'https://outlook.live.com/mail/compose/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(getOutlookComposeKind(editor)).toBe('reply');
+  });
+
+  it('mounts the strip after the Send row, not inside the sticky action bar', () => {
+    installDom(outlookComposeShell, 'https://outlook.office.com/mail/');
+    const editor = findOutlookComposeEditors(document)[0];
+    const mount = getOutlookComposeMountForAssistant(editor);
+    expect(mount.kind).toBe('flow');
+    if (mount.kind !== 'flow') return;
+    expect(mount.host.className).toBe('surface');
+    expect(mount.before?.className).toBe('fields');
+    expect(mount.host.querySelector('.action-row') === mount.host).toBe(false);
+    expect(mount.before?.getAttribute('aria-label')).not.toBe('Send');
+  });
+
+  it('returns a popover mount when Outlook has no Send control', () => {
+    installDom(`<div aria-label="Message body" contenteditable="true"></div>`, 'https://outlook.live.com/mail/compose/example');
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(getOutlookComposeMountForAssistant(editor)).toEqual({ kind: 'popover', anchor: editor });
   });
 });
