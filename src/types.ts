@@ -3,11 +3,23 @@ export type ComposeKind = 'new' | 'reply';
 export type DraftAction = 'draft' | 'improve';
 export type DraftPhase = 'idle' | 'drafting' | 'ready' | 'improving' | 'error';
 export type EmailLanguage = 'english' | 'chinese';
+export type CompatibilityMode = 'llama.cpp' | 'openai-compatible';
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
 
 export interface EmailMessage {
   sender: string;
   date: string;
   body: string;
+}
+
+export interface ContextAttachment {
+  name: string;
+  kind: 'image' | 'file';
+  mediaType: string;
+  size: string;
+  dataUrl?: string;
+  sourceUrl?: string;
+  temporary?: boolean;
 }
 
 export interface ContextItem {
@@ -18,6 +30,7 @@ export interface ContextItem {
   participants: string[];
   messages: EmailMessage[];
   label: string;
+  attachments?: ContextAttachment[];
 }
 
 export interface DraftSession {
@@ -32,7 +45,13 @@ export interface DraftSession {
 export interface AssistantSettings {
   baseUrl: string;
   model: string;
+  apiKey: string;
+  compatibilityMode: CompatibilityMode;
   temperature: number;
+  maxOutputTokens: number;
+  reasoningEffort: ReasoningEffort;
+  enableThinking: boolean;
+  systemPrompt: string;
   styleNotes: string;
   defaultLanguage: EmailLanguage;
   draftPresets: string[];
@@ -49,6 +68,7 @@ export interface AssistantSettingsExport {
 
 export interface DraftRequest {
   type: 'email-assist:draft';
+  requestId: string;
   provider: ProviderName;
   composeKind: ComposeKind;
   action: DraftAction;
@@ -56,14 +76,13 @@ export interface DraftRequest {
   draft: string;
   subject: string;
   contexts: ContextItem[];
-  includeSubject: boolean;
+  attachments: ContextAttachment[];
 }
 
 export interface DraftSuccess {
   ok: true;
   draft: string;
   suggestedSubject?: string;
-  subjectError?: string;
 }
 
 export interface DraftFailure {
@@ -85,6 +104,7 @@ export interface OpenSettingsResponse {
 export interface TestConnectionRequest {
   type: 'email-assist:test-connection';
   baseUrl: string;
+  apiKey: string;
 }
 
 export interface TestConnectionResponse {
@@ -98,5 +118,14 @@ export type AssistantMount =
 
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | LlmContentPart[];
+}
+
+export type LlmContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'auto' | 'high' } };
+
+export interface CancelDraftRequest {
+  type: 'email-assist:cancel-draft';
+  requestId: string;
 }

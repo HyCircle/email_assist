@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { getDefaultSettings } from '../src/constants';
 import { normalizeSettings, parseSettingsImport, serializeSettingsExport } from '../src/storage';
 
 describe('settings contract', () => {
@@ -8,6 +9,8 @@ describe('settings contract', () => {
     expect(settings.baseUrl).toBe('http://pc-yh:8070/v1');
     expect(settings.model).toBe('Qwen3.8-27B-Q4');
     expect(settings.temperature).toBe(0.2);
+    expect(getDefaultSettings().reasoningEffort).toBe('low');
+    expect(settings.systemPrompt).toContain('You are a careful email writing assistant');
   });
 
   it('normalizes the base URL and writing lists', () => {
@@ -16,6 +19,7 @@ describe('settings contract', () => {
       model: ' Qwen ',
       temperature: 3,
       styleNotes: ' Warm and concise. ',
+      systemPrompt: '  Use a custom system prompt.  ',
       defaultLanguage: 'chinese',
       draftPresets: ['  Draft a polite reply. ', '', 'Draft a polite reply.'],
       improvePresets: [' Rewrite shorter. ', ''],
@@ -26,6 +30,8 @@ describe('settings contract', () => {
     expect(settings.baseUrl).toBe('http://pc-yh:8070/v1');
     expect(settings.temperature).toBe(2);
     expect(settings.defaultLanguage).toBe('chinese');
+    expect(settings.systemPrompt).toBe('Use a custom system prompt.');
+    expect(normalizeSettings({ systemPrompt: '   ' }).systemPrompt).toBe(getDefaultSettings().systemPrompt);
     expect(settings.draftPresets).toEqual(['Draft a polite reply.']);
     expect(settings.improvePresets).toEqual(['Rewrite shorter.']);
     expect(settings.signOffOptions).toEqual(['Thanks,', 'Best regards,']);

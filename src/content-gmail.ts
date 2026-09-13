@@ -2,6 +2,7 @@ import './panel.css';
 
 import {
   extractGmailCurrentContext,
+  extractGmailComposeAttachments,
   findGmailComposeEditors,
   getGmailComposeKind,
   getGmailComposeMountForAssistant,
@@ -11,6 +12,7 @@ import {
   readPlainTextFromGmailEditor,
 } from './gmail-dom';
 import { attachAssistantPanel } from './panel';
+import { prepareEmailAttachments } from './media';
 import type { ComposeKind } from './types';
 
 type PanelInstance = {
@@ -81,6 +83,8 @@ function scanComposeSurfaces(): void {
           composeKind,
           getAssistantMount: getGmailComposeMountForAssistant,
           getCurrentContext: () => extractGmailCurrentContext(document),
+          getComposeAttachments: extractGmailComposeAttachments,
+          prepareAttachments: prepareEmailAttachments,
           readDraft: readPlainTextFromGmailEditor,
           readSubject: readGmailSubject,
           insertDraft: insertPlainTextIntoGmail,
@@ -139,10 +143,23 @@ function dispose(): void {
   observer.disconnect();
   window.removeEventListener('hashchange', scheduleScan);
   window.removeEventListener('popstate', scheduleScan);
+  window.removeEventListener('pagehide', handlePageHide);
+  window.removeEventListener('pageshow', handlePageShow);
   for (const instance of instances.values()) {
     instance.instance.cleanup();
   }
   instances.clear();
+}
+
+function handlePageHide(): void {
+  for (const instance of instances.values()) {
+    instance.instance.cleanup();
+  }
+  instances.clear();
+}
+
+function handlePageShow(): void {
+  scheduleScan();
 }
 
 const controllerWindow = window as GmailWindow;
@@ -152,4 +169,6 @@ controllerWindow.__emailAssistGmailController__ = { dispose };
 observer.observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('hashchange', scheduleScan);
 window.addEventListener('popstate', scheduleScan);
+window.addEventListener('pagehide', handlePageHide);
+window.addEventListener('pageshow', handlePageShow);
 scanComposeSurfaces();

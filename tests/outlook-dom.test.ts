@@ -102,6 +102,41 @@ describe('outlook-dom', () => {
     expect(context?.participants).not.toContain('email@example.com');
   });
 
+  it('uses only message-body nodes inside email message roots and keeps attachment metadata', () => {
+    installDom(`
+      <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">
+        <span id="CONV_123_SUBJECT">Conference</span>
+        <div role="document" aria-label="Message body">Outer wrapper text should be ignored.</div>
+        <div aria-label="Email message">
+          <span aria-label="From: alice@example.com"></span>
+          <div role="document" aria-label="Message body">Current message.</div>
+          <div role="document" aria-label="Message body">Forwarded message.</div>
+        </div>
+        <div aria-label="file attachments">
+          <div role="option" aria-label="paper.pdf 836 KB More actions"></div>
+          <div role="option" aria-label="site-photo.png 200 KB More actions">
+            <img src="https://outlook.office.com/mail/attachment/site-photo.png" alt="site-photo.png" />
+          </div>
+        </div>
+        <img src="https://cdn.example.com/hero.png" alt="Hero green trophy" />
+      </div></main>
+    `, 'https://outlook.office.com/mail/inbox/id/example');
+
+    const context = extractOutlookCurrentContext(document);
+    expect(context?.messages.map((message) => message.body)).toEqual(['Current message.', 'Forwarded message.']);
+    expect(context?.messages.map((message) => message.body)).not.toContain('Outer wrapper text should be ignored.');
+    expect(context?.attachments).toEqual([
+      expect.objectContaining({ kind: 'file', name: 'paper.pdf', size: '836 KB' }),
+      expect.objectContaining({
+        kind: 'image',
+        name: 'site-photo.png',
+        mediaType: 'image/png',
+        sourceUrl: 'https://outlook.office.com/mail/attachment/site-photo.png',
+      }),
+    ]);
+    expect(context?.attachments?.some((attachment) => attachment.name === 'Hero green trophy')).toBe(false);
+  });
+
   it('recovers sender and date from Outlook’s inline reply lead-in', () => {
     installDom(`
       <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">

@@ -19,9 +19,13 @@ Settings are stored in `chrome.storage.sync`. There is no `.env` file.
 
 - Base URL defaults to `http://pc-yh:8070/v1`; custom HTTP or HTTPS endpoints are supported.
 - Saving or importing a custom endpoint requests access to that endpoint origin through Chrome's optional host permission flow.
-- Requests use the OpenAI-compatible `/chat/completions` endpoint with `stream: false`.
+- Requests use the OpenAI-compatible `/chat/completions` endpoint with `stream: false` and structured `{ subject, body }` output, so a new email's subject and body are generated together on every Draft or Improve.
+- Choose `llama.cpp` for the local default; choose `OpenAI-compatible` for providers that accept the standard Chat Completions fields. An optional API key is sent as a Bearer token.
+- Reasoning effort, model thinking, and the maximum output token budget are configurable. The endpoint must support structured JSON output with `response_format.json_schema`.
+- The base system prompt is editable in Settings and is prefilled with the built-in prompt. Language, style, sign-off, and signature preferences remain separate writing defaults.
 - Common models are `Qwen3.8-27B-Q4` and `gemma-4-26B-A4B-QAT`; a custom model is also supported.
 - Writing defaults include language, style notes, sign-offs, signature, Draft presets, and Improve presets.
+- Visible attached images from the Gmail/Outlook attachment well are resized and compressed before being sent when the mail page can safely read their bytes. Decorative images in the message body are ignored. File attachments contribute metadata only; reading an attachment's contents is reserved for a future explicit Add context action.
 - Settings can be exported and imported as versioned JSON.
 
 The manifest declares the local llama.cpp host and the supported Gmail/Outlook hosts. Custom endpoints use optional host permissions and are only requested when the user saves or imports that endpoint.
@@ -47,6 +51,7 @@ Tests cover:
 - prompt context separation and current-draft passing;
 - Gmail and Outlook compose/context extraction;
 - plain-text insertion with signatures and quoted replies;
+- prompt and draft history preview and restore;
 - settings normalization and transfer payloads.
 
 DOM-sensitive changes should also be checked manually in Gmail, personal Outlook, and campus Outlook with a new compose, a reply, repeated Improve, Context +, Apply, Copy, and reopening the compose surface.

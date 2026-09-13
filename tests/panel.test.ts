@@ -19,6 +19,7 @@ function installDom(
   insertDraft: ReturnType<typeof vi.fn>;
   insertSubject: ReturnType<typeof vi.fn>;
   panel: ReturnType<typeof attachAssistantPanel>;
+  setNativeSubject: (value: string) => void;
 } {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://outlook.live.com/mail/' });
   vi.stubGlobal('window', dom.window);
@@ -55,6 +56,7 @@ function installDom(
     toJSON: () => ({}),
   }));
 
+  let nativeSubject = options?.initialSubject ?? '';
   const insertDraft = vi.fn();
   const insertSubject = vi.fn();
   const panel = attachAssistantPanel({
@@ -64,12 +66,20 @@ function installDom(
     getAssistantMount: () => ({ kind: 'flow', host, before: editor }),
     getCurrentContext: options?.getCurrentContext ?? (() => null),
     readDraft: () => options?.initialDraft ?? '',
-    readSubject: () => options?.initialSubject ?? '',
+    readSubject: () => nativeSubject,
     insertDraft,
     insertSubject,
   });
   cleanup = panel.cleanup;
-  return { host, insertDraft, insertSubject, panel };
+  return {
+    host,
+    insertDraft,
+    insertSubject,
+    panel,
+    setNativeSubject: (value: string) => {
+      nativeSubject = value;
+    },
+  };
 }
 
 afterEach(() => {
@@ -122,6 +132,61 @@ describe('assistant panel', () => {
     expect(sendMessage.mock.calls[1]?.[0].instruction).toBe('Make it warmer.');
     expect(sendMessage.mock.calls[1]?.[0].draft).toBe('First draft.');
     expect(host.querySelectorAll('.ea-prompt-history-list li')).toHaveLength(2);
+  });
+
+  it('previews generated draft history and restores an earlier version', async () => {
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: true, draft: 'First draft.', suggestedSubject: 'First subject' })
+      .mockResolvedValueOnce({ ok: true, draft: 'Second draft.', suggestedSubject: 'Second subject' });
+    const { host } = installDom(sendMessage);
+    host.querySelector<HTMLButtonElement>('.ea-trigger')!.click();
+
+    const instruction = host.querySelector<HTMLTextAreaElement>('[aria-label="Writing instruction"]')!;
+    const primary = host.querySelector<HTMLButtonElement>('.ea-prompt-column .ea-primary-button')!;
+    instruction.value = 'Write the first version.';
+    primary.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    instruction.value = 'Make it shorter.';
+    primary.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const draftToggle = host.querySelector<HTMLButtonElement>('.ea-draft-toggle')!;
+    draftToggle.click();
+    expect(host.querySelectorAll('.ea-draft-history-item')).toHaveLength(2);
+    expect(host.querySelector('.ea-draft-history-item .ea-draft-history-header')?.textContent).toContain('V2 (Current)');
+    expect(host.querySelector<HTMLTextAreaElement>('.ea-draft-history-item textarea')?.value).toBe('Second draft.');
+    expect(host.querySelectorAll<HTMLTextAreaElement>('.ea-draft-history-item textarea')[1]?.value).toBe('First draft.');
+    expect(host.querySelector('.ea-draft-history')?.textContent).not.toContain('Make it shorter.');
+    expect(host.querySelector('.ea-subject-actions')?.hasAttribute('hidden')).toBe(true);
+
+    host.querySelectorAll<HTMLButtonElement>('.ea-draft-history-item .ea-secondary-button')[1]!.click();
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="Draft email"]')?.value).toBe('First draft.');
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Subject"]')?.value).toBe('First subject');
+    expect(host.querySelector('.ea-draft-history')?.hasAttribute('hidden')).toBe(true);
+    expect(host.querySelector('.ea-subject-actions')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('cancels a running request when the panel is collapsed', async () => {
+    const sendMessage = vi.fn((message: { type: string }) => {
+      if (message.type === 'email-assist:draft') {
+        return new Promise(() => undefined);
+      }
+      return Promise.resolve({ ok: true });
+    });
+    const { host } = installDom(sendMessage);
+    const trigger = host.querySelector<HTMLButtonElement>('.ea-trigger')!;
+    trigger.click();
+
+    const instruction = host.querySelector<HTMLTextAreaElement>('[aria-label="Writing instruction"]')!;
+    instruction.value = 'Draft it.';
+    host.querySelector<HTMLButtonElement>('.ea-prompt-column .ea-primary-button')!.click();
+    await Promise.resolve();
+
+    trigger.click();
+    expect(sendMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'email-assist:cancel-draft' }));
+    expect(host.querySelector('.ea-panel')?.hasAttribute('hidden')).toBe(true);
   });
 
   it('keeps the collapsed state to a single Assist button and exposes icon labels after drafting', async () => {
@@ -190,6 +255,35 @@ describe('assistant panel', () => {
 
     host.querySelector<HTMLButtonElement>('.ea-review-actions .ea-primary-button')!.click();
     expect(insertSubject).toHaveBeenCalledWith(expect.any(HTMLElement), 'Improved subject');
+  });
+
+  it('reads the native subject once before the first draft, then Apply writes the panel subject', async () => {
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: true, draft: 'Draft text.', suggestedSubject: 'Assist subject' })
+      .mockResolvedValueOnce({ ok: true, draft: 'Improved text.', suggestedSubject: 'Assist subject' });
+    const { host, insertSubject, setNativeSubject } = installDom(sendMessage, { initialSubject: 'Original' });
+    host.querySelector<HTMLButtonElement>('.ea-trigger')!.click();
+
+    setNativeSubject('Typed in compose');
+    const instruction = host.querySelector<HTMLTextAreaElement>('[aria-label="Writing instruction"]')!;
+    instruction.value = 'Draft it.';
+    host.querySelector<HTMLButtonElement>('.ea-prompt-column .ea-primary-button')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage.mock.calls[0]?.[0].subject).toBe('Typed in compose');
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Subject"]')?.value).toBe('Assist subject');
+
+    setNativeSubject('Edited in compose after draft');
+    instruction.value = 'Make it shorter.';
+    host.querySelector<HTMLButtonElement>('.ea-prompt-column .ea-primary-button')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage.mock.calls[1]?.[0].subject).toBe('Assist subject');
+
+    host.querySelector<HTMLButtonElement>('.ea-review-actions .ea-primary-button')!.click();
+    expect(insertSubject).toHaveBeenCalledWith(expect.any(HTMLElement), 'Assist subject');
   });
 
   it('hides the subject editor for a reply compose', () => {

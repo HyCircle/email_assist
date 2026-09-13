@@ -1,4 +1,4 @@
-import type { AssistantMount, ComposeKind, ContextItem, EmailMessage } from './types';
+import type { AssistantMount, ComposeKind, ContextAttachment, ContextItem, EmailMessage } from './types';
 
 function isVisible(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement)) {
@@ -109,6 +109,83 @@ function readNodeText(node: Node): string {
   return normalizeText((node as HTMLElement).innerText || node.textContent || '');
 }
 
+function mediaTypeForName(name: string, fallback = 'application/octet-stream'): string {
+  const extension = name.toLowerCase().split('.').pop();
+  const types: Record<string, string> = {
+    gif: 'image/gif',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    txt: 'text/plain',
+  };
+  return types[extension ?? ''] ?? fallback;
+}
+
+function isImageMediaType(mediaType: string): boolean {
+  return mediaType.startsWith('image/');
+}
+
+function pushUniqueAttachment(attachments: ContextAttachment[], attachment: ContextAttachment): void {
+  const key = `${attachment.kind}:${attachment.name}`;
+  if (!attachments.some((item) => `${item.kind}:${item.name}` === key)) {
+    attachments.push(attachment);
+  }
+}
+
+function fileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentFromFile(file: File): ContextAttachment {
+  const mediaType = file.type || mediaTypeForName(file.name);
+  const kind = isImageMediaType(mediaType) ? 'image' : 'file';
+  return {
+    name: file.name,
+    kind,
+    mediaType,
+    size: fileSize(file.size),
+    ...(kind === 'image' ? { sourceUrl: URL.createObjectURL(file), temporary: true } : {}),
+  };
+}
+
+function extractOutlookAttachments(root: HTMLElement): ContextAttachment[] {
+  const attachments: ContextAttachment[] = [];
+  const fileNodes = root.querySelectorAll<HTMLElement>('[aria-label="file attachments"] [role="option"]');
+  for (const node of fileNodes) {
+    const rawName = normalizeText(node.getAttribute('aria-label') || node.textContent || '');
+    const size = rawName.match(/\b\d+(?:\.\d+)?\s*(?:B|KB|MB|GB)\b/i)?.[0] || 'unknown';
+    const name = normalizeText(rawName.replace(size, '').replace(/more actions?/gi, '')) || 'Outlook attachment';
+    const mediaType = mediaTypeForName(name);
+    const kind = isImageMediaType(mediaType) ? 'image' : 'file';
+    const href = node.querySelector<HTMLAnchorElement>('a[href]')?.href;
+    const imageSource = kind === 'image'
+      ? node.querySelector<HTMLImageElement>('img[src]')?.currentSrc || node.querySelector<HTMLImageElement>('img[src]')?.src
+      : undefined;
+    const sourceUrl = kind === 'image' ? href || imageSource : undefined;
+    pushUniqueAttachment(attachments, {
+      name,
+      kind,
+      mediaType,
+      size,
+      ...(sourceUrl ? { sourceUrl } : {}),
+    });
+  }
+
+  for (const input of root.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
+    for (const file of Array.from(input.files ?? [])) {
+      pushUniqueAttachment(attachments, attachmentFromFile(file));
+    }
+  }
+
+  return attachments;
+}
+
 function readHeaderValue(root: HTMLElement, label: string): string {
   const ariaHeader = Array.from(root.querySelectorAll<HTMLElement>('[aria-label]'))
     .map((element) => element.getAttribute('aria-label') ?? '')
@@ -156,14 +233,15 @@ function isStrongQuotedReplyMarker(node: HTMLElement): boolean {
 }
 
 function findQuotedReplyElement(editor: HTMLElement): HTMLElement | null {
-  const inlineBlockquote = editor.querySelector<HTMLElement>('blockquote');
-  if (inlineBlockquote) {
-    return inlineBlockquote;
-  }
-
   const nestedExplicit = editor.querySelector<HTMLElement>('#divRplyFwdMsg');
   if (nestedExplicit) {
     return nestedExplicit;
+  }
+
+  const inlineBlockquote = Array.from(editor.querySelectorAll<HTMLElement>('blockquote'))
+    .find(isStrongQuotedReplyMarker);
+  if (inlineBlockquote) {
+    return inlineBlockquote;
   }
 
   const directChildren = Array.from(editor.children);
@@ -257,7 +335,7 @@ function extractReadingPaneContext(root: Document | HTMLElement): ContextItem | 
 
   const bodyNodes = Array.from(
     readingPane.querySelectorAll<HTMLElement>('[role="document"][aria-label*="Message body"]'),
-  ).filter((node) => isVisible(node) && !node.isContentEditable);
+  ).filter((node) => isVisible(node) && !node.isContentEditable && node.closest('[aria-label="Email message"]'));
 
   if (bodyNodes.length === 0) {
     return null;
@@ -294,7 +372,9 @@ function extractReadingPaneContext(root: Document | HTMLElement): ContextItem | 
     return null;
   }
 
-  return makeContext(subject, participants, messages);
+  const attachments = extractOutlookAttachments(readingPane);
+  const context = makeContext(subject, participants, messages);
+  return attachments.length > 0 ? { ...context, attachments } : context;
 }
 
 function createDraftBlock(documentRef: Document, text: string): HTMLDivElement {
@@ -353,7 +433,7 @@ export function readPlainTextFromOutlookEditor(editor: HTMLElement): string {
     ? clone.querySelector<HTMLElement>('blockquote')
     : findQuotedReplyElement(clone);
 
-  if (sourceHasInlineBlockquote && boundary?.parentElement) {
+  if (boundary?.parentElement) {
     const siblings = Array.from(boundary.parentElement.childNodes);
     const boundaryIndex = siblings.indexOf(boundary);
     for (const node of siblings.slice(0, boundaryIndex)) {
@@ -386,6 +466,10 @@ export function readPlainTextFromOutlookEditor(editor: HTMLElement): string {
 
 export function readOutlookSubject(editor: HTMLElement): string {
   return normalizeText(findSubjectInput(editor)?.value ?? '');
+}
+
+export function extractOutlookComposeAttachments(editor: HTMLElement): ContextAttachment[] {
+  return extractOutlookAttachments(findOutlookComposeRoot(editor));
 }
 
 export function insertPlainTextIntoOutlook(editor: HTMLElement, text: string): void {

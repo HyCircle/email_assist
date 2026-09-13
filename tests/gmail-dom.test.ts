@@ -86,6 +86,25 @@ describe('gmail-dom', () => {
     expect(context?.messages[0]?.body).not.toContain('Inbox');
   });
 
+  it('keeps attached files and attached images, and ignores body images', () => {
+    installDom(`
+      <h2 data-thread-perm-id="thread-2">Visual update</h2>
+      <div data-message-id="m2">
+        <span email="alice@example.com">Alice</span>
+        <div class="a3s">Please see the chart.<img src="https://mail.google.com/image?id=1" alt="Chart" /></div>
+        <span class="aZo" download_url="application/pdf:report.pdf:https://mail.google.com/mail/u/0?view=att">report.pdf 12 KB</span>
+        <span download_url="image/png:plot.png:https://mail.google.com/mail/u/0?view=att">plot.png 80 KB</span>
+      </div>
+    `, 'https://mail.google.com/mail/u/0/#inbox/example');
+
+    const context = extractGmailCurrentContext(document);
+    expect(context?.attachments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'file', name: 'report.pdf', size: '12 KB' }),
+      expect.objectContaining({ kind: 'image', name: 'plot.png', mediaType: 'image/png' }),
+    ]));
+    expect(context?.attachments?.some((attachment) => attachment.name === 'Chart')).toBe(false);
+  });
+
   it('does not invent a thread from page text when message markup is missing', () => {
     installDom(`
       <main><h2>Inbox</h2><div>Please reply to this UI copy alice@example.com</div></main>

@@ -1,6 +1,6 @@
 import './settings.css';
 
-import { COMMON_MODELS } from './constants';
+import { COMMON_MODELS, MAX_OUTPUT_TOKENS } from './constants';
 import { getEndpointOriginPattern } from './llm';
 import { getSettings, parseSettingsImport, resetSettings, saveSettings, serializeSettingsExport } from './storage';
 import type { AssistantSettings, TestConnectionResponse } from './types';
@@ -50,9 +50,14 @@ function buildLayout(): void {
             <label class="settings-full"><span>Base URL</span><input id="base-url" name="base-url" type="url" required /></label>
             <label><span>Model</span><select id="model-choice" name="model-choice"></select></label>
             <label id="custom-model-field" hidden><span>Custom model</span><input id="custom-model" name="custom-model" type="text" /></label>
-            <label><span>Temperature</span><input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" required /></label>
-            <div class="settings-actions settings-full"><button type="button" id="test-connection">Test connection</button></div>
-            <p class="settings-note settings-full">Requests use <code>/chat/completions</code> under this base URL and never stream. Saving a custom endpoint asks Chrome for access to that endpoint origin.</p>
+             <label><span>API key (optional)</span><input id="api-key" name="api-key" type="password" autocomplete="off" /></label>
+             <label><span>Compatibility</span><select id="compatibility-mode" name="compatibility-mode"><option value="llama.cpp">llama.cpp</option><option value="openai-compatible">OpenAI-compatible</option></select></label>
+             <label><span>Temperature</span><input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" required /></label>
+             <label><span>Max output tokens</span><input id="max-output-tokens" name="max-output-tokens" type="number" min="128" max="8192" step="1" required /></label>
+             <label><span>Reasoning effort</span><select id="reasoning-effort" name="reasoning-effort"><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+             <label><span>Thinking</span><span class="settings-checkbox"><input id="enable-thinking" name="enable-thinking" type="checkbox" /> Enable model thinking when supported</span></label>
+             <div class="settings-actions settings-full"><button type="button" id="test-connection">Test connection</button></div>
+             <p class="settings-note settings-full">Requests use <code>/chat/completions</code>, structured JSON output, and never stream. API keys are sent as Bearer authentication and saved with your settings.</p>
           </div>
         </section>
 
@@ -64,6 +69,12 @@ function buildLayout(): void {
             <label class="settings-full"><span>Style notes</span><textarea id="style-notes" name="style-notes" rows="3" placeholder="Concise, warm, and direct."></textarea></label>
             <label class="settings-full"><span>Signature block</span><textarea id="signature" name="signature" rows="3" placeholder="Optional fixed signature text."></textarea></label>
           </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section-heading"><h2>System prompt</h2></div>
+          <label class="settings-full"><span>Base system prompt</span><textarea id="system-prompt" name="system-prompt" rows="10" spellcheck="false"></textarea></label>
+          <p class="settings-note">This text is sent as the system message. Language, style, sign-off, and signature settings are appended separately. Leave it unchanged to use the built-in default.</p>
         </section>
 
         <section class="settings-section settings-preset-grid">
@@ -102,8 +113,14 @@ function setFormValues(settings: AssistantSettings): void {
   customField.hidden = modelChoice.value !== 'custom';
   customModel.value = COMMON_MODELS.includes(settings.model) ? '' : settings.model;
   (document.querySelector<HTMLInputElement>('#base-url')!).value = settings.baseUrl;
+  (document.querySelector<HTMLInputElement>('#api-key')!).value = settings.apiKey;
+  (document.querySelector<HTMLSelectElement>('#compatibility-mode')!).value = settings.compatibilityMode;
   (document.querySelector<HTMLInputElement>('#temperature')!).value = String(settings.temperature);
+  (document.querySelector<HTMLInputElement>('#max-output-tokens')!).value = String(settings.maxOutputTokens);
+  (document.querySelector<HTMLSelectElement>('#reasoning-effort')!).value = settings.reasoningEffort;
+  (document.querySelector<HTMLInputElement>('#enable-thinking')!).checked = settings.enableThinking;
   (document.querySelector<HTMLSelectElement>('#language')!).value = settings.defaultLanguage;
+  (document.querySelector<HTMLTextAreaElement>('#system-prompt')!).value = settings.systemPrompt;
   (document.querySelector<HTMLTextAreaElement>('#style-notes')!).value = settings.styleNotes;
   (document.querySelector<HTMLTextAreaElement>('#sign-offs')!).value = listValue(settings.signOffOptions);
   (document.querySelector<HTMLTextAreaElement>('#signature')!).value = settings.signatureBlock;
@@ -117,8 +134,16 @@ function readFormValues(): AssistantSettings {
   return {
     baseUrl: document.querySelector<HTMLInputElement>('#base-url')!.value.trim(),
     model: (modelChoice.value === 'custom' ? customModel.value : modelChoice.value).trim(),
+    apiKey: document.querySelector<HTMLInputElement>('#api-key')!.value.trim(),
+    compatibilityMode: document.querySelector<HTMLSelectElement>('#compatibility-mode')!.value === 'openai-compatible' ? 'openai-compatible' : 'llama.cpp',
     temperature: Number.parseFloat(document.querySelector<HTMLInputElement>('#temperature')!.value),
+    maxOutputTokens: Number.parseInt(document.querySelector<HTMLInputElement>('#max-output-tokens')!.value, 10) || MAX_OUTPUT_TOKENS,
+    reasoningEffort: (['none', 'low', 'medium', 'high'] as const).includes(document.querySelector<HTMLSelectElement>('#reasoning-effort')!.value as 'none' | 'low' | 'medium' | 'high')
+      ? document.querySelector<HTMLSelectElement>('#reasoning-effort')!.value as 'none' | 'low' | 'medium' | 'high'
+      : 'low',
+    enableThinking: document.querySelector<HTMLInputElement>('#enable-thinking')!.checked,
     defaultLanguage: document.querySelector<HTMLSelectElement>('#language')!.value === 'chinese' ? 'chinese' : 'english',
+    systemPrompt: document.querySelector<HTMLTextAreaElement>('#system-prompt')!.value.trim(),
     styleNotes: document.querySelector<HTMLTextAreaElement>('#style-notes')!.value.trim(),
     signOffOptions: parseList(document.querySelector<HTMLTextAreaElement>('#sign-offs')!.value),
     signatureBlock: document.querySelector<HTMLTextAreaElement>('#signature')!.value.trim(),
@@ -189,6 +214,7 @@ async function main(): Promise<void> {
       const response = (await chrome.runtime.sendMessage({
         type: 'email-assist:test-connection',
         baseUrl,
+        apiKey: document.querySelector<HTMLInputElement>('#api-key')!.value.trim(),
       })) as TestConnectionResponse | undefined;
       if (!response?.ok) throw new Error(response?.error || 'Connection failed.');
       status.textContent = 'Connection successful.';

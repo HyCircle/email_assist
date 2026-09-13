@@ -234,7 +234,19 @@
   text-align: left;
 }
 
-.ea-prompt-toggle:disabled {
+.ea-draft-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--ea-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  padding: 0;
+  text-align: left;
+}
+
+.ea-prompt-toggle:disabled,
+.ea-draft-toggle:disabled {
   cursor: default;
 }
 
@@ -322,6 +334,62 @@
   overflow-wrap: anywhere;
   user-select: text;
   white-space: pre-wrap;
+}
+
+.ea-draft-history {
+  height: var(--ea-editor-height);
+  max-height: var(--ea-editor-max-height);
+  min-height: var(--ea-editor-min-height);
+  overflow-y: auto;
+}
+
+.ea-draft-history-list {
+  display: grid;
+  gap: 9px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ea-draft-history-item {
+  border-bottom: 1px solid var(--ea-border);
+  display: grid;
+  gap: 4px;
+  padding-bottom: 9px;
+}
+
+.ea-draft-history-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.ea-draft-history-header {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.ea-draft-history-subject {
+  color: var(--ea-muted);
+  font-size: inherit;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ea-draft-history-item textarea {
+  background: var(--ea-field);
+  border: 1px solid var(--ea-border);
+  border-radius: 7px;
+  color: var(--ea-ink);
+  font: inherit;
+  min-height: 76px;
+  padding: 6px 8px;
+  resize: vertical;
+  width: 100%;
 }
 
 .ea-context-form {
@@ -456,6 +524,7 @@
 .ea-secondary-button:focus-visible,
 .ea-icon-button:focus-visible,
 .ea-prompt-toggle:focus-visible,
+.ea-draft-toggle:focus-visible,
 .ea-chip-remove:focus-visible,
 .ea-field textarea:focus-visible,
 .ea-field input:focus-visible,
@@ -466,6 +535,12 @@
 }
 
 .ea-prompt-toggle:not(:disabled):hover {
+  color: var(--ea-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ea-draft-toggle:not(:disabled):hover {
   color: var(--ea-ink);
   text-decoration: underline;
   text-underline-offset: 2px;

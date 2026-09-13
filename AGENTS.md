@@ -65,6 +65,7 @@ Every code change should improve the speed, clarity, or reliability of this loop
 - `settings.ts`: settings page behavior only
 - `settings.css`: settings page styling only
 - `draft-session.ts`: draft session transitions only
+- `media.ts`: attachment image compression and same-origin reads only
 - `icon.svg`: in-page Assist trigger and source artwork
 - `icon-128.png`: Chrome toolbar icon; Chrome does not accept SVG here
 - `types.ts`: shared types only

@@ -19,6 +19,7 @@ import { getSettings } from './storage';
 import type {
   AssistantMount,
   ComposeKind,
+  ContextAttachment,
   ContextItem,
   DraftRequest,
   DraftResponse,
@@ -35,6 +36,8 @@ export type PanelBindings = {
   getCurrentContext: () => ContextItem | null;
   readDraft: (editor: HTMLElement) => string;
   readSubject: (editor: HTMLElement) => string;
+  getComposeAttachments?: (editor: HTMLElement) => ContextAttachment[];
+  prepareAttachments?: (attachments: ContextAttachment[]) => Promise<ContextAttachment[]>;
   insertDraft: (editor: HTMLElement, text: string) => void;
   insertSubject: (editor: HTMLElement, text: string) => void;
 };
@@ -42,6 +45,12 @@ export type PanelBindings = {
 type PresetSettings = {
   draftPresets: string[];
   improvePresets: string[];
+};
+
+type DraftHistoryEntry = {
+  version: number;
+  draft: string;
+  subject: string;
 };
 
 const DEFAULT_PANEL_EDITOR_HEIGHT = 160;
@@ -177,6 +186,11 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   let open = false;
   let currentContextDismissed = false;
   let requestSeq = 0;
+  let activeRequestId: string | null = null;
+  let adoptNativeSubject = bindings.composeKind === 'new';
+  let draftView: 'input' | 'history' = 'input';
+  let draftHistoryEntries: DraftHistoryEntry[] = [];
+  let currentHistoryVersion: number | null = null;
 
   const root = document.createElement('div');
   root.className = 'ea-root';
@@ -318,9 +332,12 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   status.className = 'ea-status';
   status.setAttribute('role', 'status');
 
-  const draftCaption = document.createElement('span');
-  draftCaption.className = 'ea-field-caption';
+  const draftCaption = document.createElement('button');
+  draftCaption.type = 'button';
+  draftCaption.className = 'ea-field-caption ea-draft-toggle';
   draftCaption.textContent = 'Draft';
+  draftCaption.setAttribute('aria-expanded', 'false');
+  draftCaption.setAttribute('aria-label', 'Show draft history');
   const copyButton = document.createElement('button');
   copyButton.type = 'button';
   copyButton.className = 'ea-icon-button ea-action-icon ea-copy-button';
@@ -333,7 +350,14 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
   const draftLabel = document.createElement('div');
   draftLabel.className = 'ea-field ea-draft-field';
-  draftLabel.append(draftHeader, draftOutput);
+  const draftHistory = document.createElement('div');
+  draftHistory.className = 'ea-draft-history';
+  draftHistory.hidden = true;
+  draftHistory.setAttribute('aria-label', 'Draft history');
+  const draftHistoryList = document.createElement('ol');
+  draftHistoryList.className = 'ea-draft-history-list';
+  draftHistory.append(draftHistoryList);
+  draftLabel.append(draftHeader, draftOutput, draftHistory);
 
   const subjectInput = document.createElement('input');
   subjectInput.setAttribute('aria-label', 'Subject');
@@ -373,6 +397,32 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
   function isLoading(): boolean {
     return session.phase === 'drafting' || session.phase === 'improving';
+  }
+
+  function takeNativeSubjectIfNeeded(): void {
+    if (bindings.composeKind !== 'new' || !adoptNativeSubject) {
+      return;
+    }
+
+    session = { ...session, suggestedSubject: bindings.readSubject(bindings.editor) };
+  }
+
+  function cancelActiveRequest(): void {
+    if (!activeRequestId && !isLoading()) {
+      return;
+    }
+
+    const requestId = activeRequestId;
+    activeRequestId = null;
+    requestSeq += 1;
+    session = {
+      ...session,
+      phase: session.draft ? 'ready' : 'idle',
+      error: '',
+    };
+    if (requestId) {
+      void Promise.resolve(chrome.runtime.sendMessage({ type: 'email-assist:cancel-draft', requestId })).catch(() => undefined);
+    }
   }
 
   let resizeState: { startY: number; startHeight: number } | null = null;
@@ -435,6 +485,49 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     }
   }
 
+  function renderDraftHistory(): void {
+    draftHistoryList.replaceChildren();
+    for (const entry of [...draftHistoryEntries].reverse()) {
+      const item = document.createElement('li');
+      item.className = 'ea-draft-history-item';
+
+      const itemHeader = document.createElement('div');
+      itemHeader.className = 'ea-draft-history-header';
+      const version = document.createElement('span');
+      version.textContent = `V${entry.version}${currentHistoryVersion === entry.version ? ' (Current)' : ''}`;
+      const subject = document.createElement('span');
+      subject.className = 'ea-draft-history-subject';
+      subject.textContent = entry.subject ? `Subject: ${entry.subject}` : '';
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.className = 'ea-secondary-button';
+      restore.textContent = 'Restore';
+      restore.disabled = isLoading();
+      restore.addEventListener('click', () => {
+        session = setSessionDraft(session, entry.draft);
+        session = {
+          ...session,
+          suggestedSubject: bindings.composeKind === 'new' ? entry.subject : '',
+        };
+        adoptNativeSubject = false;
+        currentHistoryVersion = entry.version;
+        draftView = 'input';
+        status.textContent = `Restored draft V${entry.version}.`;
+        render();
+        draftOutput.focus();
+      });
+      itemHeader.append(version, subject, restore);
+
+      const preview = document.createElement('textarea');
+      preview.readOnly = true;
+      preview.rows = 4;
+      preview.value = entry.draft;
+      preview.setAttribute('aria-label', `Draft history V${entry.version}`);
+      item.append(itemHeader, preview);
+      draftHistoryList.append(item);
+    }
+  }
+
   function renderPromptView(): void {
     const hasHistory = submittedInstructions.length > 0;
     const showingHistory = hasHistory && promptView === 'history';
@@ -474,6 +567,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     const loading = isLoading();
     const hasDraft = Boolean(session.draft.trim());
     const showingPromptHistory = submittedInstructions.length > 0 && promptView === 'history';
+    const showingDraftHistory = draftHistoryEntries.length > 0 && draftView === 'history';
     panelMain.dataset.hasDraft = String(hasDraft);
     root.dataset.open = String(open);
     root.dataset.loading = String(loading);
@@ -483,12 +577,19 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     primaryButton.textContent = getPrimaryActionLabel(session.phase, hasDraft);
     primaryButton.title = loading ? 'Request in progress' : hasDraft ? 'Improve the draft' : 'Draft an email';
     trigger.title = open ? 'Collapse Email Assistant' : 'Open Email Assistant';
-    primaryButton.disabled = loading || showingPromptHistory;
+    primaryButton.disabled = loading || showingPromptHistory || showingDraftHistory;
     if (draftOutput.value !== session.draft) {
       draftOutput.value = session.draft;
     }
     draftOutput.disabled = loading;
-    outputColumn.hidden = !hasDraft;
+    draftOutput.hidden = showingDraftHistory;
+    draftHistory.hidden = !showingDraftHistory;
+    draftCaption.textContent = showingDraftHistory ? 'Draft history' : 'Draft';
+    draftCaption.disabled = draftHistoryEntries.length === 0;
+    draftCaption.setAttribute('aria-expanded', String(showingDraftHistory));
+    draftCaption.setAttribute('aria-label', showingDraftHistory ? 'Show current draft' : 'Show draft history');
+    outputColumn.hidden = !hasDraft && draftHistoryEntries.length === 0;
+    subjectActions.hidden = showingDraftHistory;
     subjectActions.dataset.hasSubject = String(bindings.composeKind === 'new');
     if (subjectInput.value !== session.suggestedSubject) {
       subjectInput.value = session.suggestedSubject;
@@ -497,9 +598,9 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     applyButton.disabled = loading || !hasDraft;
     copyButton.disabled = loading || !hasDraft;
     startOverButton.disabled = loading;
-    startOverButton.hidden = !hasDraft;
+    startOverButton.hidden = !hasDraft && draftHistoryEntries.length === 0;
     reviewActions.hidden = !hasDraft;
-    presetSelect.disabled = loading || showingPromptHistory;
+    presetSelect.disabled = loading || showingPromptHistory || showingDraftHistory;
     instructionInput.disabled = loading;
     addContextButton.disabled = loading || session.contexts.length >= MAX_CONTEXT_ITEMS;
     contextTextInput.maxLength = MAX_CONTEXT_ITEM_CHARS;
@@ -512,6 +613,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     renderContexts();
     renderPresets();
     renderPromptHistory();
+    renderDraftHistory();
     renderPromptView();
   }
 
@@ -563,28 +665,43 @@ export function attachAssistantPanel(bindings: PanelBindings) {
       return;
     }
 
+    takeNativeSubjectIfNeeded();
     const seq = ++requestSeq;
+    const requestId = makeId('request');
     const action = session.draft.trim() ? 'improve' : 'draft';
     session = startDraftRequest(session);
     render();
 
-    const subject = bindings.composeKind === 'new'
-      ? session.suggestedSubject
-      : bindings.readSubject(bindings.editor);
-
-    const request: DraftRequest = {
-      type: 'email-assist:draft',
-      provider: bindings.provider,
-      composeKind: bindings.composeKind,
-      action,
-      instruction,
-      draft: session.draft,
-      subject,
-      contexts: session.contexts,
-      includeSubject: action === 'draft' && bindings.composeKind === 'new' && !subject.trim(),
-    };
-
     try {
+      const subject = bindings.composeKind === 'new' ? session.suggestedSubject : '';
+      const contexts = bindings.prepareAttachments
+        ? await Promise.all(session.contexts.map(async (context) => ({
+          ...context,
+          attachments: context.attachments
+            ? await bindings.prepareAttachments!(context.attachments)
+            : undefined,
+        })))
+        : session.contexts;
+      const composeAttachments = bindings.getComposeAttachments?.(bindings.editor) ?? [];
+      const attachments = bindings.prepareAttachments
+        ? await bindings.prepareAttachments(composeAttachments)
+        : composeAttachments;
+      if (seq !== requestSeq || !root.isConnected) {
+        return;
+      }
+      activeRequestId = requestId;
+      const request: DraftRequest = {
+        type: 'email-assist:draft',
+        requestId,
+        provider: bindings.provider,
+        composeKind: bindings.composeKind,
+        action,
+        instruction,
+        draft: session.draft,
+        subject,
+        contexts,
+        attachments,
+      };
       const response = (await chrome.runtime.sendMessage(request)) as DraftResponse | undefined;
       if (seq !== requestSeq || !root.isConnected) {
         return;
@@ -594,16 +711,24 @@ export function attachAssistantPanel(bindings: PanelBindings) {
       }
 
       session = finishDraftRequest(session, response.draft, response.suggestedSubject);
+      draftHistoryEntries = [...draftHistoryEntries, {
+        version: draftHistoryEntries.length + 1,
+        draft: session.draft,
+        subject: session.suggestedSubject,
+      }];
+      currentHistoryVersion = draftHistoryEntries.at(-1)?.version ?? null;
+      adoptNativeSubject = false;
       submittedInstructions = [...submittedInstructions, instruction];
       instructionInput.value = '';
-      if (response.subjectError) {
-        session = { ...session, error: `Draft ready. Subject suggestion unavailable: ${response.subjectError}` };
-      }
     } catch (error) {
       if (seq !== requestSeq || !root.isConnected) {
         return;
       }
       session = failDraftRequest(session, error instanceof Error ? error.message : 'Could not create a draft.');
+    } finally {
+      if (activeRequestId === requestId) {
+        activeRequestId = null;
+      }
     }
 
     render();
@@ -615,6 +740,9 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   trigger.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (open) {
+      cancelActiveRequest();
+    }
     open = !open;
     root.dataset.open = String(open);
     panel.hidden = !open;
@@ -695,6 +823,17 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     }
   });
 
+  draftCaption.addEventListener('click', () => {
+    if (!draftHistoryEntries.length) return;
+    draftView = draftView === 'history' ? 'input' : 'history';
+    render();
+    if (draftView === 'input') {
+      draftOutput.focus();
+    } else {
+      draftCaption.focus();
+    }
+  });
+
   primaryButton.addEventListener('click', () => void runDraft());
   instructionInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -705,22 +844,27 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
   draftOutput.addEventListener('input', () => {
     if (!isLoading()) {
+      currentHistoryVersion = null;
       session = setSessionDraft(session, draftOutput.value);
       render();
     }
   });
 
   subjectInput.addEventListener('input', () => {
+    currentHistoryVersion = null;
+    adoptNativeSubject = false;
     session = { ...session, suggestedSubject: subjectInput.value };
   });
 
   applyButton.addEventListener('click', () => {
     if (!session.draft.trim()) return;
     bindings.insertDraft(bindings.editor, session.draft);
-    const existingSubject = bindings.readSubject(bindings.editor).trim();
-    const nextSubject = session.suggestedSubject.trim();
-    if (bindings.composeKind === 'new' && nextSubject !== existingSubject) {
-      bindings.insertSubject(bindings.editor, nextSubject);
+    if (bindings.composeKind === 'new') {
+      const nextSubject = session.suggestedSubject.trim();
+      const existingSubject = bindings.readSubject(bindings.editor).trim();
+      if (nextSubject !== existingSubject) {
+        bindings.insertSubject(bindings.editor, nextSubject);
+      }
     }
     status.textContent = 'Applied to compose. Review it before sending.';
   });
@@ -737,10 +881,15 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   });
 
   startOverButton.addEventListener('click', () => {
-    requestSeq += 1;
+    cancelActiveRequest();
     session = startOver(session);
     submittedInstructions = [];
+    draftHistoryEntries = [];
+    currentHistoryVersion = null;
+    adoptNativeSubject = bindings.composeKind === 'new';
+    takeNativeSubjectIfNeeded();
     promptView = 'input';
+    draftView = 'input';
     instructionInput.value = '';
     render();
     instructionInput.focus();
@@ -771,6 +920,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
     event.preventDefault();
     event.stopImmediatePropagation();
+    cancelActiveRequest();
     open = false;
     root.dataset.open = 'false';
     panel.hidden = true;
@@ -787,7 +937,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
 
   return {
     cleanup() {
-      requestSeq += 1;
+      cancelActiveRequest();
       stopResizing();
       chrome.storage.onChanged.removeListener(handleStorageChange);
       document.removeEventListener('keydown', handleEscape, true);
@@ -795,12 +945,15 @@ export function attachAssistantPanel(bindings: PanelBindings) {
       root.remove();
     },
     setComposeKind(composeKind: ComposeKind) {
+      cancelActiveRequest();
       bindings.composeKind = composeKind;
       session = {
         ...session,
         composeKind,
         suggestedSubject: composeKind === 'new' ? bindings.readSubject(bindings.editor) : '',
       };
+      adoptNativeSubject = composeKind === 'new';
+      currentHistoryVersion = null;
       refreshCurrentContext();
       render();
     },

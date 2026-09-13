@@ -5,13 +5,14 @@ import type { DraftRequest } from '../src/types';
 
 const validRequest: DraftRequest = {
   type: 'email-assist:draft',
+  requestId: 'request-1',
   provider: 'gmail',
   composeKind: 'reply',
   action: 'improve',
   instruction: 'Make it shorter.',
   draft: 'Thanks.',
   subject: 'Update',
-  includeSubject: false,
+  attachments: [],
   contexts: [{
     id: 'thread-1',
     kind: 'current-thread',
@@ -31,6 +32,8 @@ describe('background message boundary', () => {
     expect(isDraftRequest({ ...validRequest, instruction: ' ' })).toBe(false);
     expect(isDraftRequest({ ...validRequest, instruction: 'x'.repeat(4001) })).toBe(false);
     expect(isDraftRequest({ ...validRequest, draft: 'x'.repeat(6001) })).toBe(false);
+    expect(isDraftRequest({ ...validRequest, subject: 'x'.repeat(241) })).toBe(false);
+    expect(isDraftRequest({ ...validRequest, contexts: [{ ...validRequest.contexts[0], messages: [{ sender: 'Alice', date: '', body: 'x'.repeat(7001) }] }] })).toBe(false);
     expect(isDraftRequest({ ...validRequest, contexts: [{ ...validRequest.contexts[0], provider: 'outlook' }] })).toBe(false);
     expect(isDraftRequest({ ...validRequest, contexts: Array.from({ length: 7 }, (_, index) => ({ ...validRequest.contexts[0], id: `thread-${index}` })) })).toBe(false);
   });
@@ -42,7 +45,7 @@ describe('background message boundary', () => {
   });
 
   it('accepts connection tests from the extension page and rejects empty URLs', () => {
-    expect(isTestConnectionRequest({ type: 'email-assist:test-connection', baseUrl: 'http://pc-yh:8070/v1' })).toBe(true);
+    expect(isTestConnectionRequest({ type: 'email-assist:test-connection', baseUrl: 'http://pc-yh:8070/v1', apiKey: '' })).toBe(true);
     expect(isTestConnectionRequest({ type: 'email-assist:test-connection', baseUrl: ' ' })).toBe(false);
     const chromeStub = { runtime: { id: 'extension-id' } };
     vi.stubGlobal('chrome', chromeStub);

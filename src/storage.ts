@@ -1,5 +1,18 @@
-import { getDefaultSettings, SETTINGS_EXPORT_VERSION, SETTINGS_STORAGE_KEY } from './constants';
-import type { AssistantSettings, AssistantSettingsExport, EmailLanguage } from './types';
+import {
+  getDefaultSettings,
+  MAX_SIGNATURE_CHARS,
+  MAX_SYSTEM_PROMPT_CHARS,
+  MAX_STYLE_NOTES_CHARS,
+  SETTINGS_EXPORT_VERSION,
+  SETTINGS_STORAGE_KEY,
+} from './constants';
+import type {
+  AssistantSettings,
+  AssistantSettingsExport,
+  CompatibilityMode,
+  EmailLanguage,
+  ReasoningEffort,
+} from './types';
 
 function normalizeBaseUrl(candidate: unknown, fallback: string): string {
   if (typeof candidate !== 'string' || !candidate.trim()) {
@@ -15,6 +28,26 @@ function normalizeTemperature(candidate: unknown, fallback: number): number {
   }
 
   return Math.min(2, Math.max(0, candidate));
+}
+
+function normalizeInteger(candidate: unknown, fallback: number, minimum: number, maximum: number): number {
+  if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+    return fallback;
+  }
+
+  return Math.round(Math.min(maximum, Math.max(minimum, candidate)));
+}
+
+function normalizeBoundedText(candidate: unknown, fallback: string, maximum: number): string {
+  return typeof candidate === 'string' ? candidate.trim().slice(0, maximum) : fallback;
+}
+
+function normalizeCompatibilityMode(candidate: unknown, fallback: CompatibilityMode): CompatibilityMode {
+  return candidate === 'llama.cpp' || candidate === 'openai-compatible' ? candidate : fallback;
+}
+
+function normalizeReasoningEffort(candidate: unknown, fallback: ReasoningEffort): ReasoningEffort {
+  return candidate === 'none' || candidate === 'low' || candidate === 'medium' || candidate === 'high' ? candidate : fallback;
 }
 
 function normalizeLanguage(candidate: unknown, fallback: EmailLanguage): EmailLanguage {
@@ -47,14 +80,19 @@ export function normalizeSettings(candidate?: Partial<AssistantSettings> | null)
   return {
     baseUrl: normalizeBaseUrl(candidate?.baseUrl, defaults.baseUrl),
     model: typeof candidate?.model === 'string' ? candidate.model.trim() : defaults.model,
+    apiKey: normalizeBoundedText(candidate?.apiKey, defaults.apiKey, 500),
+    compatibilityMode: normalizeCompatibilityMode(candidate?.compatibilityMode, defaults.compatibilityMode),
     temperature: normalizeTemperature(candidate?.temperature, defaults.temperature),
-    styleNotes: typeof candidate?.styleNotes === 'string' ? candidate.styleNotes.trim() : defaults.styleNotes,
+    maxOutputTokens: normalizeInteger(candidate?.maxOutputTokens, defaults.maxOutputTokens, 128, 8192),
+    reasoningEffort: normalizeReasoningEffort(candidate?.reasoningEffort, defaults.reasoningEffort),
+    enableThinking: typeof candidate?.enableThinking === 'boolean' ? candidate.enableThinking : defaults.enableThinking,
+    systemPrompt: normalizeBoundedText(candidate?.systemPrompt, defaults.systemPrompt, MAX_SYSTEM_PROMPT_CHARS) || defaults.systemPrompt,
+    styleNotes: normalizeBoundedText(candidate?.styleNotes, defaults.styleNotes, MAX_STYLE_NOTES_CHARS),
     defaultLanguage: normalizeLanguage(candidate?.defaultLanguage, defaults.defaultLanguage),
     draftPresets: normalizePresetList(candidate?.draftPresets, defaults.draftPresets),
     improvePresets: normalizePresetList(candidate?.improvePresets, defaults.improvePresets),
     signOffOptions: normalizePresetList(candidate?.signOffOptions, defaults.signOffOptions),
-    signatureBlock:
-      typeof candidate?.signatureBlock === 'string' ? candidate.signatureBlock.trim() : defaults.signatureBlock,
+    signatureBlock: normalizeBoundedText(candidate?.signatureBlock, defaults.signatureBlock, MAX_SIGNATURE_CHARS),
   };
 }
 

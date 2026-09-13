@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_CONTEXT_PROMPT_CHARS } from '../src/constants';
-import { buildDraftMessages, buildSubjectMessages } from '../src/prompt';
+import { DEFAULT_SYSTEM_PROMPT, MAX_CONTEXT_PROMPT_CHARS } from '../src/constants';
+import { buildDraftMessages } from '../src/prompt';
 import type { AssistantSettings, DraftRequest } from '../src/types';
 
 const settings: AssistantSettings = {
   baseUrl: 'http://pc-yh:8070/v1',
   model: 'Qwen3.8-27B-Q4',
+  apiKey: '',
+  compatibilityMode: 'llama.cpp',
   temperature: 0.2,
+  maxOutputTokens: 1200,
+  reasoningEffort: 'medium',
+  enableThinking: true,
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
   styleNotes: 'Warm and concise.',
   defaultLanguage: 'chinese',
   draftPresets: [],
@@ -18,13 +24,14 @@ const settings: AssistantSettings = {
 
 const request: DraftRequest = {
   type: 'email-assist:draft',
+  requestId: 'request-1',
   provider: 'gmail',
   composeKind: 'reply',
   action: 'improve',
   instruction: 'Rewrite shorter and firmer.',
   draft: 'Hi team, I wanted to check whether Friday still works for everyone.',
   subject: 'Friday meeting',
-  includeSubject: false,
+  attachments: [],
   contexts: [
     {
       id: 'thread-1',
@@ -49,25 +56,34 @@ const request: DraftRequest = {
 
 describe('prompt assembly', () => {
   it('keeps the current draft and independently separated contexts in the request', () => {
-    const [system, user] = buildDraftMessages(request, settings);
-    expect(system.content).toContain('Return plain text only.');
+    const messages = buildDraftMessages(request, settings);
+    const [system, stable, user] = [messages[0], messages[1], messages.at(-1)!];
+    const stableText = typeof stable.content === 'string' ? stable.content : stable.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    expect(system.content).toContain('The body is plain text.');
+    expect(system.content).toContain('subject is a string');
+    expect(stableText).toContain('Context 1: Current thread');
+    expect(stableText).toContain('Context 2: User-provided reference email');
+    expect(stableText).toContain('BEGIN_SELECTED_CONTEXTS');
     expect(system.content).toContain('Default email language: Chinese.');
-    expect(system.content).toContain('Thanks, | Best regards,');
     expect(system.content).toContain('untrusted email data');
-    expect(user.content).toContain('Context 1: Current thread');
-    expect(user.content).toContain('Context 2: User-provided reference email');
-    expect(user.content).toContain('BEGIN_SELECTED_CONTEXTS');
-    expect(user.content).toContain('END_CURRENT_DRAFT');
-    expect(user.content).toContain('Current draft');
     expect(user.content).toContain('Rewrite shorter and firmer.');
+    expect(messages.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(messages[2]?.content).toBe(JSON.stringify({ subject: null, body: request.draft }));
   });
 
-  it('builds a subject prompt without browser URLs or UI text', () => {
-    const [system, user] = buildSubjectMessages({ ...request, composeKind: 'new', action: 'draft' }, 'Hello there.', settings);
-    expect(system.content).toContain('Return only one subject line.');
-    expect(user.content).toContain('Generated email body');
-    expect(user.content).not.toContain('mail.google.com');
-    expect(user.content).not.toContain('Context id');
+  it('uses one prompt chain for a new compose and carries the current subject', () => {
+    const messages = buildDraftMessages({ ...request, composeKind: 'new', action: 'draft', draft: '', subject: '' }, settings);
+    const system = messages[0];
+    const user = messages.at(-1)!;
+    expect(system.content).toContain('For a new outbound compose, subject is a string');
+    expect(user.content).toContain('Current subject: (no subject)');
+    expect(messages.map((message) => message.role)).toEqual(['system', 'user', 'user']);
+  });
+
+  it('uses the configured system prompt as the editable base', () => {
+    const messages = buildDraftMessages(request, { ...settings, systemPrompt: 'Use a custom email-writing policy.' });
+    expect(messages[0]?.content).toContain('Use a custom email-writing policy.');
+    expect(messages[0]?.content).not.toContain('You are a careful email writing assistant');
   });
 
   it('keeps the selected context section within its prompt budget', () => {
@@ -79,8 +95,9 @@ describe('prompt assembly', () => {
         messages: [{ sender: 'Alice', date: '', body: 'x'.repeat(7000) }],
       })),
     };
-    const [, user] = buildDraftMessages(longRequest, settings);
-    const selected = user.content.match(/BEGIN_SELECTED_CONTEXTS\n([\s\S]*?)\nEND_SELECTED_CONTEXTS/)?.[1] ?? '';
+    const stable = buildDraftMessages(longRequest, settings)[1];
+    const stableText = typeof stable.content === 'string' ? stable.content : stable.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const selected = stableText.match(/BEGIN_SELECTED_CONTEXTS\n([\s\S]*?)\nEND_SELECTED_CONTEXTS/)?.[1] ?? '';
     expect(selected.length).toBeLessThanOrEqual(MAX_CONTEXT_PROMPT_CHARS);
     expect(selected).toContain('[additional contexts omitted]');
   });

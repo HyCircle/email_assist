@@ -1,4 +1,4 @@
-import type { AssistantMount, ComposeKind, ContextItem, EmailMessage } from './types';
+import type { AssistantMount, ComposeKind, ContextAttachment, ContextItem, EmailMessage } from './types';
 
 function isVisible(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement)) {
@@ -103,6 +103,116 @@ function toEmailMessage(root: HTMLElement): EmailMessage | null {
   };
 }
 
+function mediaTypeForName(name: string, fallback = 'application/octet-stream'): string {
+  const extension = name.toLowerCase().split('.').pop();
+  const types: Record<string, string> = {
+    gif: 'image/gif',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    txt: 'text/plain',
+  };
+  return types[extension ?? ''] ?? fallback;
+}
+
+function isImageMediaType(mediaType: string): boolean {
+  return mediaType.startsWith('image/');
+}
+
+function pushUniqueAttachment(attachments: ContextAttachment[], attachment: ContextAttachment): void {
+  const key = `${attachment.kind}:${attachment.name}`;
+  if (!attachments.some((item) => `${item.kind}:${item.name}` === key)) {
+    attachments.push(attachment);
+  }
+}
+
+function fileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseGmailDownload(node: HTMLElement): { mediaType: string; name: string; sourceUrl?: string } | null {
+  const download = node.getAttribute('download_url') || '';
+  const parts = download.split(':');
+  if (parts.length < 3) {
+    return null;
+  }
+
+  let name = '';
+  try {
+    name = normalizeText(decodeURIComponent(parts[1] || ''));
+  } catch {
+    name = normalizeText(parts[1] || '');
+  }
+  if (!name) {
+    return null;
+  }
+
+  const sourceUrl = parts.slice(2).join(':');
+  return {
+    mediaType: parts[0] || '',
+    name,
+    ...(sourceUrl ? { sourceUrl } : {}),
+  };
+}
+
+function attachmentFromFile(file: File): ContextAttachment {
+  const mediaType = file.type || mediaTypeForName(file.name);
+  const kind = isImageMediaType(mediaType) ? 'image' : 'file';
+  return {
+    name: file.name,
+    kind,
+    mediaType,
+    size: fileSize(file.size),
+    ...(kind === 'image' ? { sourceUrl: URL.createObjectURL(file), temporary: true } : {}),
+  };
+}
+
+function extractGmailAttachments(root: HTMLElement): ContextAttachment[] {
+  const attachments: ContextAttachment[] = [];
+  const fileNodes = root.querySelectorAll<HTMLElement>('[download_url], .aZo');
+  for (const node of fileNodes) {
+    if (node.closest('[data-email-assist="true"]')) {
+      continue;
+    }
+    if (!node.hasAttribute('download_url') && node.querySelector('[download_url]')) {
+      continue;
+    }
+
+    const parsed = parseGmailDownload(node);
+    const rawText = normalizeText(node.textContent || node.getAttribute('aria-label') || '');
+    const size = rawText.match(/\b\d+(?:\.\d+)?\s*(?:B|KB|MB|GB)\b/i)?.[0] || 'unknown';
+    const name = parsed?.name || normalizeText(rawText.replace(size, '').replace(/download|add to drive|edit with/gi, '')) || 'Gmail attachment';
+    const mediaType = parsed?.mediaType || mediaTypeForName(name);
+    const kind = isImageMediaType(mediaType) ? 'image' : 'file';
+    const imageSource = kind === 'image'
+      ? parsed?.sourceUrl || node.querySelector<HTMLImageElement>('img[src]')?.currentSrc || node.querySelector<HTMLImageElement>('img[src]')?.src
+      : undefined;
+    const href = node.querySelector<HTMLAnchorElement>('a[href]')?.href;
+    const sourceUrl = kind === 'image' ? imageSource || href : undefined;
+    pushUniqueAttachment(attachments, {
+      name,
+      kind,
+      mediaType: mediaType || mediaTypeForName(name),
+      size,
+      ...(sourceUrl ? { sourceUrl } : {}),
+    });
+  }
+
+  for (const input of root.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
+    for (const file of Array.from(input.files ?? [])) {
+      pushUniqueAttachment(attachments, attachmentFromFile(file));
+    }
+  }
+
+  return attachments;
+}
+
 export function findGmailComposeEditors(root: ParentNode = document): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>('div[aria-label="Message Body"][contenteditable="true"]'),
@@ -173,6 +283,10 @@ export function insertGmailSubject(editor: HTMLElement, text: string): void {
   subjectInput.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+export function extractGmailComposeAttachments(editor: HTMLElement): ContextAttachment[] {
+  return extractGmailAttachments(getGmailComposeRoot(editor));
+}
+
 export function extractGmailCurrentContext(root: Document | HTMLElement = document): ContextItem | null {
   const doc = root.ownerDocument ?? (root as Document);
   const messageRoots = Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).filter(isVisible);
@@ -197,6 +311,7 @@ export function extractGmailCurrentContext(root: Document | HTMLElement = docume
     doc.querySelector<HTMLElement>('h2[data-thread-perm-id], main h2')?.textContent ?? '',
   );
   const participants = Array.from(new Set(messages.map((message) => message.sender).filter(Boolean)));
+  const attachments = messageRoots.flatMap(extractGmailAttachments);
 
   return {
     id: 'gmail:current',
@@ -206,5 +321,6 @@ export function extractGmailCurrentContext(root: Document | HTMLElement = docume
     participants,
     messages,
     label: subject || 'Current Gmail thread',
+    attachments: attachments.length > 0 ? attachments : undefined,
   };
 }
