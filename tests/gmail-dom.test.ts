@@ -112,6 +112,18 @@ describe('gmail-dom', () => {
     expect(editor.querySelector('[data-email-assist-draft="true"]')?.textContent).toContain('Thanks');
   });
 
+  it('preserves line breaks when reading an existing Gmail draft', () => {
+    installDom(`<div role="dialog"><div aria-label="Message Body" contenteditable="true">
+      <div>This is a test email.</div>
+      <div><br></div>
+      <div>Best regards,</div>
+      <div>Yuncheng</div>
+    </div></div>`, 'https://mail.google.com/mail/u/0/#inbox?compose=new');
+
+    const editor = findGmailComposeEditors(document)[0];
+    expect(readPlainTextFromGmailEditor(editor)).toBe('This is a test email.\n\nBest regards,\nYuncheng');
+  });
+
   it('does not treat Gmail’s empty-editor placeholder as a draft', () => {
     installDom(gmailPopupCompose, 'https://mail.google.com/mail/u/0/#inbox?compose=new');
     const editor = findGmailComposeEditors(document)[0];

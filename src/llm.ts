@@ -1,5 +1,5 @@
 import { buildDraftMessages, buildSubjectMessages } from './prompt';
-import { REQUEST_TIMEOUT_MS } from './constants';
+import { MAX_DRAFT_CHARS, REQUEST_TIMEOUT_MS } from './constants';
 import type { AssistantSettings, DraftRequest, LlmMessage } from './types';
 
 export function getEndpointOriginPattern(baseUrl: string): string | null {
@@ -105,7 +105,12 @@ export async function testLlmConnection(baseUrl: string): Promise<void> {
 }
 
 export async function requestDraftFromLlm(request: DraftRequest, settings: AssistantSettings): Promise<string> {
-  return requestText(buildDraftMessages(request, settings), settings);
+  const draft = await requestText(buildDraftMessages(request, settings), settings);
+  if (draft.length > MAX_DRAFT_CHARS) {
+    throw new Error('Model output exceeded the limit. Please retry.');
+  }
+
+  return draft;
 }
 
 export async function requestSubjectFromLlm(

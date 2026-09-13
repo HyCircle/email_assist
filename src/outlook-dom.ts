@@ -20,6 +20,30 @@ function normalizeText(text: string): string {
     .trim();
 }
 
+const STRUCTURAL_LINE_TAGS = new Set(['DIV', 'LI', 'P', 'PRE', 'TR']);
+
+function readStructuredText(node: Node): string {
+  if (node.nodeType === 3) {
+    return node.nodeValue ?? '';
+  }
+
+  if (node instanceof HTMLElement && node.tagName === 'BR') {
+    return '\n';
+  }
+
+  const children = Array.from(node.childNodes);
+  const hasStructuralChild = children.some(
+    (child) => child instanceof HTMLElement && STRUCTURAL_LINE_TAGS.has(child.tagName),
+  );
+  const content = children
+    .filter((child) => !(hasStructuralChild && child.nodeType === 3 && !child.nodeValue?.trim()))
+    .map(readStructuredText)
+    .join('');
+  return node instanceof HTMLElement && STRUCTURAL_LINE_TAGS.has(node.tagName)
+    ? `${content}\n`
+    : content;
+}
+
 function createInputEvent(text: string): Event {
   return new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' });
 }
@@ -29,9 +53,11 @@ function findOutlookComposeRoot(editor: HTMLElement): HTMLElement {
 }
 
 function findSubjectInput(editor: HTMLElement): HTMLInputElement | null {
-  return findOutlookComposeRoot(editor).querySelector<HTMLInputElement>(
-    'input[aria-label="Subject"], input[placeholder="Add a subject"]',
-  );
+  return Array.from(
+    findOutlookComposeRoot(editor).querySelectorAll<HTMLInputElement>(
+      'input[aria-label="Subject"], input[placeholder="Add a subject"]',
+    ),
+  ).find((input) => !input.closest('[data-email-assist="true"]')) ?? null;
 }
 
 function findDirectChildContaining(parent: HTMLElement, descendant: HTMLElement): HTMLElement | null {
@@ -344,7 +370,7 @@ export function readPlainTextFromOutlookEditor(editor: HTMLElement): string {
   }
 
   if (!boundary) {
-    return normalizeText(clone.innerText || clone.textContent || '');
+    return normalizeText(readStructuredText(clone));
   }
 
   const parent = boundary.parentElement;
@@ -355,7 +381,7 @@ export function readPlainTextFromOutlookEditor(editor: HTMLElement): string {
     }
   }
 
-  return normalizeText(clone.innerText || clone.textContent || '');
+  return normalizeText(readStructuredText(clone));
 }
 
 export function readOutlookSubject(editor: HTMLElement): string {

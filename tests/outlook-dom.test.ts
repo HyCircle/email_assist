@@ -7,6 +7,8 @@ import {
   getOutlookComposeKind,
   getOutlookComposeMountForAssistant,
   insertPlainTextIntoOutlook,
+  insertOutlookSubject,
+  readOutlookSubject,
   readPlainTextFromOutlookEditor,
 } from '../src/outlook-dom';
 
@@ -16,6 +18,7 @@ function installDom(html: string, url: string): void {
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('HTMLElement', dom.window.HTMLElement);
   vi.stubGlobal('InputEvent', dom.window.InputEvent);
+  vi.stubGlobal('Event', dom.window.Event);
   vi.spyOn(dom.window.HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
     width: 320, height: 120, top: 0, left: 0, right: 320, bottom: 120, x: 0, y: 0, toJSON: () => ({}),
   }));
@@ -55,6 +58,27 @@ describe('outlook-dom', () => {
     const editor = findOutlookComposeEditors(document)[0];
     expect(getOutlookComposeKind(editor)).toBe('new');
     expect(extractOutlookCurrentContext(document, editor)).toBeNull();
+  });
+
+  it('targets the Outlook subject input instead of the assistant subject field', () => {
+    installDom(`
+      <div data-app-section="MailReadCompose">
+        <section data-email-assist="true">
+          <input aria-label="Subject" placeholder="If available" value="Suggested subject">
+        </section>
+        <input aria-label="Subject" placeholder="Add a subject" id="MSG_2_SUBJECT" value="">
+        <div aria-label="Message body" contenteditable="true"></div>
+      </div>
+    `, 'https://outlook.cloud.microsoft/mail/');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    const hostSubject = document.querySelector<HTMLInputElement>('#MSG_2_SUBJECT')!;
+    expect(readOutlookSubject(editor)).toBe('');
+
+    insertOutlookSubject(editor, 'Test email');
+
+    expect(hostSubject.value).toBe('Test email');
+    expect(document.querySelector<HTMLInputElement>('[data-email-assist="true"] input')?.value).toBe('Suggested subject');
   });
 
   it('extracts a structured Outlook reading pane without scanning page UI', () => {
@@ -122,6 +146,18 @@ describe('outlook-dom', () => {
     expect(readPlainTextFromOutlookEditor(editor)).toContain('Thanks for the update.');
     expect(editor.textContent).toContain('Original quoted reply body.');
     expect(editor.querySelector('[data-email-assist-draft="true"]')?.textContent).toContain('Thanks');
+  });
+
+  it('preserves line breaks when reading an existing Outlook draft', () => {
+    installDom(`<div><div aria-label="Message body" contenteditable="true">
+      <div class="elementToProof">This is a test email.</div>
+      <div class="elementToProof"><br></div>
+      <div class="elementToProof">Best regards,</div>
+      <div class="elementToProof">Yuncheng</div>
+    </div></div>`, 'https://outlook.live.com/mail/compose/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(readPlainTextFromOutlookEditor(editor)).toBe('This is a test email.\n\nBest regards,\nYuncheng');
   });
 
   it('does not treat Outlook quoted reply content as the current draft', () => {

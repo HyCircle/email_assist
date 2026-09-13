@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { MAX_DRAFT_CHARS } from '../src/constants';
 import { getChatCompletionsUrl, requestDraftFromLlm, testLlmConnection } from '../src/llm';
 import type { AssistantSettings, DraftRequest } from '../src/types';
 
@@ -50,6 +51,14 @@ describe('llm client', () => {
   it('reports an empty response instead of returning a blank draft', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [] }) }));
     await expect(requestDraftFromLlm(request, settings)).rejects.toThrow('usable text');
+  });
+
+  it('rejects a draft that exceeds the length limit', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'x'.repeat(MAX_DRAFT_CHARS + 1) } }] }),
+    }));
+    await expect(requestDraftFromLlm(request, settings)).rejects.toThrow('exceeded the limit');
   });
 
   it('probes /models for a connection test', async () => {

@@ -7,6 +7,10 @@
   --ea-field: #ffffff;
   --ea-accent: #285c91;
   --ea-accent-contrast: #ffffff;
+  --ea-danger: #b42318;
+  --ea-editor-height: 160px;
+  --ea-editor-min-height: 120px;
+  --ea-editor-max-height: 520px;
   box-sizing: border-box;
   color: var(--ea-ink);
   color-scheme: light;
@@ -30,6 +34,7 @@
   --ea-field: #292929;
   --ea-accent: #5b9bd5;
   --ea-accent-contrast: #111820;
+  --ea-danger: #ff7b72;
   color-scheme: dark;
 }
 
@@ -42,16 +47,35 @@
   display: none !important;
 }
 
-.ea-trigger-row {
-  align-items: center;
-  display: flex;
+.ea-root[data-open='true'] {
+  background: var(--ea-surface);
+  border: 1px solid var(--ea-border);
+  border-radius: 10px;
+  padding: 0 9px 9px;
+}
+
+.ea-root[data-open='true'] > .ea-panel-header {
+  background: var(--ea-accent);
+  border-radius: 9px 9px 0 0;
+  margin: -1px -10px 0;
+}
+
+.ea-root[data-open='true'] > .ea-panel-header .ea-trigger {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 10px;
+  color: var(--ea-accent-contrast);
+}
+
+.ea-root[data-open='true'] > .ea-panel-header .ea-icon-button {
+  color: var(--ea-accent-contrast);
 }
 
 .ea-trigger,
 .ea-primary-button,
 .ea-secondary-button,
-.ea-link-button,
 .ea-icon-button,
+.ea-prompt-toggle,
 .ea-chip-remove,
 .ea-field select {
   font: inherit;
@@ -60,8 +84,8 @@
 .ea-trigger,
 .ea-primary-button,
 .ea-secondary-button,
-.ea-link-button,
 .ea-icon-button,
+.ea-prompt-toggle,
 .ea-chip-remove {
   cursor: pointer;
 }
@@ -80,21 +104,39 @@
 
 .ea-panel {
   align-content: start;
-  background: var(--ea-surface);
-  border: 1px solid var(--ea-border);
-  border-radius: 10px;
   display: grid;
   gap: 8px;
-  margin-top: 6px;
-  padding: 9px;
+  margin-top: 4px;
 }
 
-.ea-panel-header,
+.ea-resize-handle {
+  bottom: 0;
+  cursor: ns-resize;
+  height: 10px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  touch-action: none;
+  z-index: 4;
+}
+
+.ea-resize-handle::after {
+  background: var(--ea-border);
+  border-radius: 999px;
+  bottom: 3px;
+  content: '';
+  height: 2px;
+  left: 50%;
+  opacity: 0.7;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 42px;
+}
+
 .ea-context-row,
 .ea-inline-actions,
 .ea-draft-actions,
-.ea-review-actions,
-.ea-footer {
+.ea-review-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
@@ -102,20 +144,24 @@
 }
 
 .ea-panel-header {
-  justify-content: space-between;
+  align-items: center;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .ea-context-row {
-  flex: 1;
   min-width: 0;
 }
 
 .ea-context-chips {
   display: flex;
   flex: 1;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 5px;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .ea-context-chip {
@@ -150,10 +196,51 @@
   min-width: 0;
 }
 
+.ea-field-caption,
 .ea-field > span,
 .ea-status {
   color: var(--ea-muted);
   font-size: 12px;
+}
+
+.ea-field-header {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.ea-field-header .ea-field-caption {
+  flex: 0 0 auto;
+}
+
+.ea-field-header .ea-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ea-prompt-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--ea-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  padding: 0;
+  text-align: left;
+}
+
+.ea-prompt-toggle:disabled {
+  cursor: default;
+}
+
+.ea-field-caption {
+  color: var(--ea-accent);
+  font-weight: 650;
 }
 
 .ea-field textarea,
@@ -177,26 +264,64 @@
 
 .ea-prompt-column,
 .ea-output-column {
+  align-content: start;
   display: grid;
   gap: 7px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
 .ea-panel-main {
+  align-items: start;
   display: grid;
   gap: 9px;
   min-width: 0;
 }
 
 .ea-panel-main[data-has-draft='true'] {
-  grid-template-columns: minmax(220px, 0.75fr) minmax(300px, 1.25fr);
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
 }
 
-.ea-draft-field textarea {
-  min-height: 116px;
-  max-height: 260px;
+.ea-prompt-body,
+.ea-draft-field > textarea {
+  height: var(--ea-editor-height);
+  max-height: var(--ea-editor-max-height);
+  min-height: var(--ea-editor-min-height);
+  min-width: 0;
+}
+
+.ea-prompt-body > textarea,
+.ea-prompt-body > .ea-prompt-history,
+.ea-draft-field > textarea {
   overflow-y: auto;
-  resize: vertical;
+  resize: none;
+}
+
+.ea-prompt-body > textarea,
+.ea-prompt-body > .ea-prompt-history {
+  height: 100%;
+  min-height: 0;
+}
+
+.ea-prompt-history {
+  background: var(--ea-surface-muted);
+  border: 1px solid var(--ea-border);
+  border-radius: 7px;
+  color: var(--ea-muted);
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+
+.ea-prompt-history-list {
+  margin: 0 0 0 18px;
+  padding: 0;
+}
+
+.ea-prompt-history-list li {
+  cursor: text;
+  overflow-wrap: anywhere;
+  user-select: text;
+  white-space: pre-wrap;
 }
 
 .ea-context-form {
@@ -210,10 +335,18 @@
 
 .ea-primary-button,
 .ea-secondary-button,
-.ea-link-button,
 .ea-icon-button {
   border-radius: 7px;
   padding: 5px 9px;
+}
+
+.ea-draft-actions,
+.ea-review-actions,
+.ea-draft-actions > button,
+.ea-draft-actions > select,
+.ea-review-actions > button {
+  height: 33px;
+  min-height: 33px;
 }
 
 .ea-primary-button {
@@ -227,15 +360,6 @@
   background: var(--ea-surface);
   border: 1px solid var(--ea-border);
   color: var(--ea-ink);
-}
-
-.ea-link-button {
-  background: transparent;
-  border: 0;
-  color: var(--ea-accent);
-  padding-inline: 2px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .ea-icon-button {
@@ -252,27 +376,86 @@
   width: 28px;
 }
 
+.ea-start-over {
+  color: var(--ea-muted);
+  font-weight: 400;
+}
+
+.ea-start-over:hover:not(:disabled),
+.ea-start-over:focus-visible {
+  color: var(--ea-danger);
+}
+
+.ea-icon-button:not(.ea-start-over):hover:not(:disabled),
+.ea-icon-button:not(.ea-start-over):focus-visible {
+  color: var(--ea-ink);
+}
+
+.ea-action-icon svg {
+  height: 16px;
+  width: 16px;
+}
+
 .ea-draft-actions select {
-  max-width: 220px;
+  flex: 1 1 0;
+  max-width: none;
+  min-width: 0;
   width: auto;
 }
 
-.ea-footer {
-  border-top: 1px solid var(--ea-border);
-  justify-content: space-between;
-  padding-top: 6px;
+.ea-subject-actions {
+  align-items: center;
+  display: grid;
+  gap: 7px;
+  height: 33px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.ea-subject-actions > .ea-field {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  grid-column: 1;
+  height: 33px;
+}
+
+.ea-subject-actions > .ea-field > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ea-subject-actions > .ea-field input {
+  flex: 1 1 auto;
+  height: 33px;
+  width: auto;
+}
+
+.ea-subject-actions .ea-review-actions {
+  align-items: center;
+  grid-column: 2;
+  height: 33px;
+  min-height: 0;
+}
+
+.ea-subject-actions[data-has-subject='false'] {
+  grid-template-columns: 1fr;
+}
+
+.ea-subject-actions[data-has-subject='false'] .ea-review-actions {
+  grid-column: 1;
+  justify-content: flex-end;
 }
 
 .ea-status {
   margin: 0;
-  min-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .ea-trigger:focus-visible,
 .ea-primary-button:focus-visible,
 .ea-secondary-button:focus-visible,
-.ea-link-button:focus-visible,
 .ea-icon-button:focus-visible,
+.ea-prompt-toggle:focus-visible,
 .ea-chip-remove:focus-visible,
 .ea-field textarea:focus-visible,
 .ea-field input:focus-visible,
@@ -282,12 +465,28 @@
   outline-offset: 2px;
 }
 
+.ea-prompt-toggle:not(:disabled):hover {
+  color: var(--ea-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ea-root[data-open='true'] > .ea-panel-header .ea-trigger:focus-visible,
+.ea-root[data-open='true'] > .ea-panel-header .ea-icon-button:focus-visible {
+  outline-color: var(--ea-accent-contrast);
+}
+
 .ea-primary-button:disabled,
 .ea-secondary-button:disabled,
-.ea-link-button:disabled,
 .ea-icon-button:disabled {
-  cursor: wait;
+  cursor: default;
   opacity: 0.55;
+}
+
+.ea-root[data-loading='true'] .ea-primary-button:disabled,
+.ea-root[data-loading='true'] .ea-secondary-button:disabled,
+.ea-root[data-loading='true'] .ea-icon-button:disabled {
+  cursor: wait;
 }
 
 .ea-root[data-layout='popover'] {
@@ -306,5 +505,9 @@
 @media (max-width: 720px) {
   .ea-panel-main[data-has-draft='true'] {
     grid-template-columns: 1fr;
+  }
+
+  .ea-subject-actions {
+    grid-template-columns: 1fr auto;
   }
 }

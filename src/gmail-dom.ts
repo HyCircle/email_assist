@@ -20,6 +20,30 @@ function normalizeText(text: string): string {
     .trim();
 }
 
+const STRUCTURAL_LINE_TAGS = new Set(['DIV', 'LI', 'P', 'PRE', 'TR']);
+
+function readStructuredText(node: Node): string {
+  if (node.nodeType === 3) {
+    return node.nodeValue ?? '';
+  }
+
+  if (node instanceof HTMLElement && node.tagName === 'BR') {
+    return '\n';
+  }
+
+  const children = Array.from(node.childNodes);
+  const hasStructuralChild = children.some(
+    (child) => child instanceof HTMLElement && STRUCTURAL_LINE_TAGS.has(child.tagName),
+  );
+  const content = children
+    .filter((child) => !(hasStructuralChild && child.nodeType === 3 && !child.nodeValue?.trim()))
+    .map(readStructuredText)
+    .join('');
+  return node instanceof HTMLElement && STRUCTURAL_LINE_TAGS.has(node.tagName)
+    ? `${content}\n`
+    : content;
+}
+
 function createInputEvent(text: string): Event {
   return new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' });
 }
@@ -110,7 +134,7 @@ export function readPlainTextFromGmailEditor(editor: HTMLElement): string {
   clone
     .querySelectorAll('.gmail_quote, .gmail_signature, [data-smartmail="gmail_signature"], blockquote')
     .forEach((node) => node.remove());
-  const text = normalizeText(clone.innerText || clone.textContent || '');
+  const text = normalizeText(readStructuredText(clone));
   return /^Press \/ to write using your Gmail & Drive$/i.test(text) ? '' : text;
 }
 

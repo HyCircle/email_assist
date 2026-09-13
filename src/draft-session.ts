@@ -4,13 +4,14 @@ export function createDraftSession(
   composeKind: ComposeKind,
   contexts: ContextItem[],
   initialDraft = '',
+  initialSubject = '',
 ): DraftSession {
   const draft = initialDraft.trim();
   return {
     composeKind,
     contexts: [...contexts],
     draft,
-    suggestedSubject: '',
+    suggestedSubject: composeKind === 'new' ? initialSubject.trim() : '',
     phase: draft ? 'ready' : 'idle',
     error: '',
   };
@@ -24,11 +25,11 @@ export function startDraftRequest(session: DraftSession): DraftSession {
   };
 }
 
-export function finishDraftRequest(session: DraftSession, draft: string, suggestedSubject = ''): DraftSession {
+export function finishDraftRequest(session: DraftSession, draft: string, suggestedSubject?: string): DraftSession {
   return {
     ...session,
     draft: draft.trim(),
-    suggestedSubject: suggestedSubject.trim(),
+    suggestedSubject: suggestedSubject === undefined ? session.suggestedSubject : suggestedSubject.trim(),
     phase: 'ready',
     error: '',
   };
