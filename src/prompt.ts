@@ -188,11 +188,12 @@ export function buildDraftMessages(request: DraftRequest, settings: AssistantSet
   const action = request.action === 'improve'
     ? 'Improve the previous candidate while preserving its intent and factual content.'
     : request.composeKind === 'reply'
-      ? 'Draft a reply to the selected email context.'
+      ? 'Draft the outbound email the writer is about to send in this reply compose.'
       : 'Draft a new outbound email using the selected context and instruction.';
   const task = [
     `Compose kind: ${request.composeKind}`,
     `Action: ${action}`,
+    ...(request.writer?.trim() ? [`Writer: ${normalizeBlock(request.writer)}`] : []),
     `Current subject: ${normalizeBlock(request.subject) || '(no subject)'}`,
     `User instruction:\n${normalizeBlock(request.instruction)}`,
     'Produce the next email candidate now.',

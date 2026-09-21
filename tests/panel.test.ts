@@ -25,6 +25,7 @@ function installDom(
   vi.stubGlobal('window', dom.window);
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('HTMLElement', dom.window.HTMLElement);
+  vi.stubGlobal('HTMLButtonElement', dom.window.HTMLButtonElement);
   vi.stubGlobal('Option', dom.window.Option);
   vi.stubGlobal('crypto', { randomUUID: () => 'test-id' });
   dom.window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
@@ -320,5 +321,58 @@ describe('assistant panel', () => {
 
     expect(host.querySelector('.ea-context-chip')).toBe(chip);
     expect(status.textContent).toBe('Copied to clipboard.');
+  });
+
+  it('toggles the reply-chain viewer from the current-thread chip without losing the draft', () => {
+    const currentThread: ContextItem = {
+      id: 'outlook:current',
+      kind: 'current-thread',
+      provider: 'outlook',
+      subject: 'Stat 385 HW1 Grading Update and Requests',
+      participants: ['Zhong, Ping-Shou'],
+      messages: [
+        { sender: 'Zhong, Ping-Shou <pszhong@uic.edu>', date: 'Sat 09/19', body: 'Good morning Yuncheng.' },
+        { sender: 'Hao, Yuncheng <yhao24@uic.edu>', date: 'Fri 09/18', body: 'Dear Professor Zhong, I finished grading.' },
+      ],
+      label: 'Re: Stat 385 HW1 Grading Update and Requests',
+    };
+    const { host } = installDom(vi.fn(), {
+      composeKind: 'reply',
+      initialDraft: 'Thanks — I will follow up.',
+      getCurrentContext: () => currentThread,
+    });
+    host.querySelector<HTMLButtonElement>('.ea-trigger')!.click();
+
+    const draft = host.querySelector<HTMLTextAreaElement>('[aria-label="Draft email"]')!;
+    expect(draft.value).toBe('Thanks — I will follow up.');
+    expect(host.querySelector('.ea-thread-viewer')?.hasAttribute('hidden')).toBe(true);
+
+    const chipLabel = host.querySelector<HTMLButtonElement>('.ea-context-chip-label')!;
+    chipLabel.click();
+
+    expect(host.querySelector('.ea-panel-main')?.hasAttribute('hidden')).toBe(true);
+    expect(host.querySelector('.ea-thread-viewer')?.hasAttribute('hidden')).toBe(false);
+    expect(host.querySelector('.ea-thread-viewer')?.textContent).toContain('Good morning Yuncheng.');
+    expect(host.querySelector('.ea-thread-viewer')?.textContent).toContain('Dear Professor Zhong, I finished grading.');
+    expect(host.querySelector('.ea-context-chip-active')).not.toBeNull();
+
+    chipLabel.click();
+
+    expect(host.querySelector('.ea-panel-main')?.hasAttribute('hidden')).toBe(false);
+    expect(host.querySelector('.ea-thread-viewer')?.hasAttribute('hidden')).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="Draft email"]')?.value).toBe('Thanks — I will follow up.');
+  });
+
+  it('stops prompt clicks from bubbling to the compose host', () => {
+    const { host } = installDom(vi.fn());
+    host.querySelector<HTMLButtonElement>('.ea-trigger')!.click();
+
+    let hostClicks = 0;
+    host.addEventListener('click', () => {
+      hostClicks += 1;
+    });
+
+    host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Writing instruction"]')!.click();
+    expect(hostClicks).toBe(0);
   });
 });

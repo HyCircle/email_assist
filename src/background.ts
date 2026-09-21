@@ -118,7 +118,9 @@ export function isDraftRequest(message: unknown): message is DraftRequest {
     candidate.contexts.every((context) => context.provider === candidate.provider) &&
     Array.isArray(candidate.attachments) &&
     candidate.attachments.length <= MAX_ATTACHMENT_ITEMS &&
-    candidate.attachments.every(isContextAttachment)
+    candidate.attachments.every(isContextAttachment) &&
+    (candidate.writer === undefined ||
+      (typeof candidate.writer === 'string' && candidate.writer.length <= MAX_ATTACHMENT_NAME_CHARS))
   );
 }
 

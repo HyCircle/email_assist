@@ -10,6 +10,7 @@ import {
   insertPlainTextIntoGmail,
   readGmailSubject,
   readPlainTextFromGmailEditor,
+  extractGmailWriter,
 } from './gmail-dom';
 import { attachAssistantPanel } from './panel';
 import { prepareEmailAttachments } from './media';
@@ -83,6 +84,7 @@ function scanComposeSurfaces(): void {
           composeKind,
           getAssistantMount: getGmailComposeMountForAssistant,
           getCurrentContext: () => extractGmailCurrentContext(document),
+          getWriter: () => extractGmailWriter(document),
           getComposeAttachments: extractGmailComposeAttachments,
           prepareAttachments: prepareEmailAttachments,
           readDraft: readPlainTextFromGmailEditor,

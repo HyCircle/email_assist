@@ -77,6 +77,7 @@ export interface DraftRequest {
   subject: string;
   contexts: ContextItem[];
   attachments: ContextAttachment[];
+  writer?: string;
 }
 
 export interface DraftSuccess {

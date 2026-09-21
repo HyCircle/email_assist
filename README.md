@@ -23,7 +23,7 @@ Settings are stored in `chrome.storage.sync`. There is no `.env` file.
 - Choose `llama.cpp` for the local default; choose `OpenAI-compatible` for providers that accept the standard Chat Completions fields. An optional API key is sent as a Bearer token.
 - Reasoning effort, model thinking, and the maximum output token budget are configurable. The endpoint must support structured JSON output with `response_format.json_schema`.
 - The base system prompt is editable in Settings and is prefilled with the built-in prompt. Language, style, sign-off, and signature preferences remain separate writing defaults.
-- Common models are `Qwen3.8-27B-Q4` and `gemma-4-26B-A4B-QAT`; a custom model is also supported.
+- Common models are `Qwen3.8-27B-Q4-OCR` and `gemma-4-26B-A4B-QAT`; a custom model is also supported.
 - Writing defaults include language, style notes, sign-offs, signature, Draft presets, and Improve presets.
 - Visible attached images from the Gmail/Outlook attachment well are resized and compressed before being sent when the mail page can safely read their bytes. Decorative images in the message body are ignored. File attachments contribute metadata only; reading an attachment's contents is reserved for a future explicit Add context action.
 - Settings can be exported and imported as versioned JSON.

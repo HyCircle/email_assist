@@ -6,7 +6,7 @@ import type { AssistantSettings, DraftRequest } from '../src/types';
 
 const settings: AssistantSettings = {
   baseUrl: 'http://pc-yh:8070/v1',
-  model: 'Qwen3.8-27B-Q4',
+  model: 'Qwen3.8-27B-Q4-OCR',
   apiKey: '',
   compatibilityMode: 'llama.cpp',
   temperature: 0.2,
@@ -100,5 +100,13 @@ describe('prompt assembly', () => {
     const selected = stableText.match(/BEGIN_SELECTED_CONTEXTS\n([\s\S]*?)\nEND_SELECTED_CONTEXTS/)?.[1] ?? '';
     expect(selected.length).toBeLessThanOrEqual(MAX_CONTEXT_PROMPT_CHARS);
     expect(selected).toContain('[additional contexts omitted]');
+  });
+
+  it('names the writer and frames reply as an outbound draft from that writer', () => {
+    const messages = buildDraftMessages({ ...request, action: 'draft', draft: '', writer: 'Yuncheng <me@example.com>' }, settings);
+    const user = messages.at(-1)!;
+    expect(user.content).toContain('Writer: Yuncheng <me@example.com>');
+    expect(user.content).toContain('Draft the outbound email the writer is about to send in this reply compose.');
+    expect(user.content).not.toContain('Draft a reply to the selected email context.');
   });
 });

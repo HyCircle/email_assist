@@ -176,10 +176,27 @@
   padding: 3px 6px 3px 8px;
 }
 
-.ea-context-chip > span {
+.ea-context-chip-active {
+  border-color: var(--ea-accent, #0f6cbd);
+  box-shadow: inset 0 0 0 1px var(--ea-accent, #0f6cbd);
+}
+
+.ea-context-chip > span,
+.ea-context-chip-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ea-context-chip-label {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  max-width: 100%;
+  padding: 0;
+  text-align: left;
 }
 
 .ea-chip-remove {
@@ -188,6 +205,58 @@
   color: var(--ea-muted);
   line-height: 1;
   padding: 1px 3px;
+}
+
+.ea-thread-viewer {
+  display: grid;
+  gap: 10px;
+  max-height: min(420px, 55vh);
+  min-height: 160px;
+  overflow: auto;
+  padding: 2px 0 4px;
+}
+
+.ea-thread-viewer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ea-thread-viewer-empty {
+  color: var(--ea-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.ea-thread-message {
+  border: 1px solid var(--ea-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.ea-thread-message-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.ea-thread-message-sender {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ea-thread-message-date {
+  color: var(--ea-muted);
+  font-size: 11px;
+}
+
+.ea-thread-message-body {
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .ea-field {

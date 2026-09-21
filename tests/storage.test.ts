@@ -7,7 +7,7 @@ describe('settings contract', () => {
   it('uses the in-code defaults when nothing is stored', () => {
     const settings = normalizeSettings(undefined);
     expect(settings.baseUrl).toBe('http://pc-yh:8070/v1');
-    expect(settings.model).toBe('Qwen3.8-27B-Q4');
+    expect(settings.model).toBe('Qwen3.8-27B-Q4-OCR');
     expect(settings.temperature).toBe(0.2);
     expect(getDefaultSettings().reasoningEffort).toBe('low');
     expect(settings.systemPrompt).toContain('You are a careful email writing assistant');

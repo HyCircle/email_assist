@@ -6,7 +6,7 @@ import type { AssistantSettings, DraftRequest } from '../src/types';
 
 const settings: AssistantSettings = {
   baseUrl: 'http://pc-yh:8070/v1/',
-  model: 'Qwen3.8-27B-Q4',
+  model: 'Qwen3.8-27B-Q4-OCR',
   apiKey: 'sk-test',
   compatibilityMode: 'llama.cpp',
   temperature: 0.2,

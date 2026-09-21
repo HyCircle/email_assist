@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Email Assistant",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Local-first email drafting assistant for Gmail and Outlook Web.",
   "icons": {
     "128": "icon-128.png"

@@ -34,6 +34,7 @@ export type PanelBindings = {
   composeKind: ComposeKind;
   getAssistantMount: (editor: HTMLElement) => AssistantMount;
   getCurrentContext: () => ContextItem | null;
+  getWriter?: () => string;
   readDraft: (editor: HTMLElement) => string;
   readSubject: (editor: HTMLElement) => string;
   getComposeAttachments?: (editor: HTMLElement) => ContextAttachment[];
@@ -191,6 +192,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   let draftView: 'input' | 'history' = 'input';
   let draftHistoryEntries: DraftHistoryEntry[] = [];
   let currentHistoryVersion: number | null = null;
+  let viewingThread = false;
 
   const root = document.createElement('div');
   root.className = 'ea-root';
@@ -388,9 +390,18 @@ export function attachAssistantPanel(bindings: PanelBindings) {
   panelMain.className = 'ea-panel-main';
   panelMain.append(promptColumn, outputColumn);
 
+  const threadViewer = document.createElement('div');
+  threadViewer.className = 'ea-thread-viewer';
+  threadViewer.hidden = true;
+  threadViewer.setAttribute('aria-label', 'Reply chain');
+  const threadViewerList = document.createElement('div');
+  threadViewerList.className = 'ea-thread-viewer-list';
+  threadViewer.append(threadViewerList);
+
   panel.append(
     contextForm,
     panelMain,
+    threadViewer,
   );
   root.append(panelHeader, panel, resizeHandle);
   const detachRoot = attachRoot(root, mount);
@@ -539,13 +550,93 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     promptHistory.hidden = !showingHistory;
   }
 
+  function currentThreadContext(): ContextItem | undefined {
+    return session.contexts.find((context) => context.kind === 'current-thread');
+  }
+
+  function renderThreadViewer(): void {
+    const thread = currentThreadContext();
+    threadViewerList.replaceChildren();
+    if (!thread || thread.messages.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'ea-thread-viewer-empty';
+      empty.textContent = 'No reply-chain messages to show.';
+      threadViewerList.append(empty);
+      return;
+    }
+
+    for (const message of thread.messages) {
+      const item = document.createElement('article');
+      item.className = 'ea-thread-message';
+      const meta = document.createElement('header');
+      meta.className = 'ea-thread-message-meta';
+      const sender = document.createElement('div');
+      sender.className = 'ea-thread-message-sender';
+      sender.textContent = message.sender || 'Unknown sender';
+      meta.append(sender);
+      if (message.date) {
+        const date = document.createElement('div');
+        date.className = 'ea-thread-message-date';
+        date.textContent = message.date;
+        meta.append(date);
+      }
+      const body = document.createElement('pre');
+      body.className = 'ea-thread-message-body';
+      body.textContent = message.body;
+      item.append(meta, body);
+      threadViewerList.append(item);
+    }
+  }
+
+  function syncThreadViewer(): void {
+    if (viewingThread && (bindings.composeKind !== 'reply' || !currentThreadContext())) {
+      viewingThread = false;
+    }
+
+    if (viewingThread) {
+      contextForm.hidden = true;
+      panelMain.hidden = true;
+      threadViewer.hidden = false;
+      renderThreadViewer();
+      return;
+    }
+
+    panelMain.hidden = false;
+    threadViewer.hidden = true;
+  }
+
   function renderContexts(): void {
     contextChips.replaceChildren();
     for (const context of session.contexts) {
       const chip = document.createElement('span');
       chip.className = 'ea-context-chip';
-      const label = document.createElement('span');
-      label.textContent = contextDisplayLabel(context);
+      if (context.kind === 'current-thread' && viewingThread) {
+        chip.classList.add('ea-context-chip-active');
+      }
+
+      const canToggleThread = context.kind === 'current-thread' && bindings.composeKind === 'reply';
+      if (canToggleThread) {
+        const label = document.createElement('button');
+        label.type = 'button';
+        label.className = 'ea-context-chip-label';
+        label.textContent = contextDisplayLabel(context);
+        label.title = viewingThread ? 'Hide reply chain' : 'View reply chain';
+        label.setAttribute('aria-pressed', String(viewingThread));
+        label.setAttribute(
+          'aria-label',
+          viewingThread ? 'Hide reply chain' : `View reply chain: ${contextDisplayLabel(context)}`,
+        );
+        label.addEventListener('click', () => {
+          viewingThread = !viewingThread;
+          render();
+        });
+        chip.append(label);
+      } else {
+        const label = document.createElement('span');
+        label.textContent = contextDisplayLabel(context);
+        chip.append(label);
+      }
+
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'ea-chip-remove';
@@ -554,11 +645,12 @@ export function attachAssistantPanel(bindings: PanelBindings) {
       remove.addEventListener('click', () => {
         if (context.kind === 'current-thread') {
           currentContextDismissed = true;
+          viewingThread = false;
         }
         session = setSessionContexts(session, session.contexts.filter((item) => item.id !== context.id));
         render();
       });
-      chip.append(label, remove);
+      chip.append(remove);
       contextChips.append(chip);
     }
   }
@@ -615,6 +707,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     renderPromptHistory();
     renderDraftHistory();
     renderPromptView();
+    syncThreadViewer();
   }
 
   function refreshCurrentContext(): boolean {
@@ -690,6 +783,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
         return;
       }
       activeRequestId = requestId;
+      const writer = bindings.getWriter?.().trim() || undefined;
       const request: DraftRequest = {
         type: 'email-assist:draft',
         requestId,
@@ -701,6 +795,7 @@ export function attachAssistantPanel(bindings: PanelBindings) {
         subject,
         contexts,
         attachments,
+        ...(writer ? { writer } : {}),
       };
       const response = (await chrome.runtime.sendMessage(request)) as DraftResponse | undefined;
       if (seq !== requestSeq || !root.isConnected) {
@@ -737,11 +832,15 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     }
   }
 
+  root.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
   trigger.addEventListener('click', (event) => {
     event.preventDefault();
-    event.stopPropagation();
     if (open) {
       cancelActiveRequest();
+      viewingThread = false;
     }
     open = !open;
     root.dataset.open = String(open);
@@ -764,10 +863,17 @@ export function attachAssistantPanel(bindings: PanelBindings) {
           positionPopover(root, mount.anchor);
         }
       });
+    } else {
+      panelMain.hidden = false;
+      threadViewer.hidden = true;
     }
   });
 
   addContextButton.addEventListener('click', () => {
+    if (viewingThread) {
+      viewingThread = false;
+      syncThreadViewer();
+    }
     contextForm.hidden = !contextForm.hidden;
     if (!contextForm.hidden) {
       contextLabelInput.focus();
@@ -922,8 +1028,11 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     event.stopImmediatePropagation();
     cancelActiveRequest();
     open = false;
+    viewingThread = false;
     root.dataset.open = 'false';
     panel.hidden = true;
+    panelMain.hidden = false;
+    threadViewer.hidden = true;
     contextRow.hidden = true;
     settingsButton.hidden = true;
     resizeHandle.hidden = true;
@@ -947,6 +1056,9 @@ export function attachAssistantPanel(bindings: PanelBindings) {
     setComposeKind(composeKind: ComposeKind) {
       cancelActiveRequest();
       bindings.composeKind = composeKind;
+      if (composeKind !== 'reply') {
+        viewingThread = false;
+      }
       session = {
         ...session,
         composeKind,

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   extractGmailCurrentContext,
+  extractGmailWriter,
   findGmailComposeEditors,
   getGmailComposeKind,
   getGmailComposeMountForAssistant,
@@ -45,15 +46,40 @@ const gmailPopupCompose = `
 `;
 
 const gmailInlineReply = `
-  <main>
-    <h2 data-thread-perm-id="thread-1">Project update</h2>
-    <div data-message-id="m1">
-      <span email="alice@example.com">Alice</span>
-      <div class="a3s">Could you send the final draft today?</div>
+  <h2 data-thread-perm-id="thread-1">Project update</h2>
+  <div role="list">
+    <div role="listitem" class="kv">
+      <div class="adf ads">
+        <span email="alice@example.com">Alice</span>
+        <span class="g3" title="Jul 15, 2026, 11:58 AM">Wed, Jul 15, 11:58 AM</span>
+        Order Update Hello Yuncheng, we need your choice on the case color.
+      </div>
     </div>
-  </main>
-  <table>
+    <div role="listitem" class="kv">
+      <div class="adf ads">
+        <span email="me@example.com">Yuncheng</span>
+        <span class="g3" title="Jul 15, 2026, 12:20 PM">Wed, Jul 15, 12:20 PM</span>
+        Hi Alice, does case mean the storage container?
+      </div>
+    </div>
+    <div role="listitem" class="kv">
+      <div class="adf ads">
+        <span email="alice@example.com">Alice</span>
+        <span class="g3" title="Jul 16, 2026, 9:10 AM">Thu, Jul 16, 9:10 AM</span>
+        Yes, the white case holds the lenses.
+      </div>
+    </div>
+    <div role="listitem" class="h7">
+      <div class="adn ads" data-message-id="m4" data-legacy-message-id="legacy-4">
+        <span email="me@example.com">Yuncheng</span>
+        <span class="g3" title="Jul 22, 2026, 10:19 PM">Wed, Jul 22, 10:19 PM</span>
+        <div class="a3s">Could you send the final draft today?</div>
+      </div>
+    </div>
+  </div>
+  <table class="cf An">
     <tr><td class="Ap">
+      <div aria-hidden="true"><input aria-label="Subject" value=""></div>
       <div class="aO7">
         <div aria-label="Message Body" contenteditable="true"></div>
         <span>Press / to write using your Gmail &amp; Drive</span>
@@ -61,6 +87,7 @@ const gmailInlineReply = `
     </td></tr>
   </table>
   <div aria-label="Help me write"></div>
+  <a aria-label="Google Account: Yuncheng (me@example.com), Google membership" href="https://accounts.google.com/SignOutOptions"></a>
 `;
 
 describe('gmail-dom', () => {
@@ -75,15 +102,25 @@ describe('gmail-dom', () => {
     expect(extractGmailCurrentContext(document)).toBeNull();
   });
 
-  it('extracts the visible thread from message ids and email attributes', () => {
+  it('extracts the visible thread from conversation list items including collapsed snippets', () => {
     installDom(gmailInlineReply, 'https://mail.google.com/mail/u/0/#inbox/example');
 
     const context = extractGmailCurrentContext(document);
     expect(context?.kind).toBe('current-thread');
     expect(context?.subject).toBe('Project update');
-    expect(context?.participants).toContain('alice@example.com');
-    expect(context?.messages[0]?.body).toContain('final draft');
+    expect(context?.messages).toHaveLength(4);
+    expect(context?.participants).toEqual(expect.arrayContaining(['alice@example.com', 'me@example.com']));
+    expect(context?.messages[0]?.body).toContain('case color');
+    expect(context?.messages[0]?.date).toBe('Jul 15, 2026, 11:58 AM');
+    expect(context?.messages[3]?.sender).toBe('me@example.com');
+    expect(context?.messages[3]?.body).toContain('final draft');
+    expect(context?.messages[3]?.date).toBe('Jul 22, 2026, 10:19 PM');
     expect(context?.messages[0]?.body).not.toContain('Inbox');
+  });
+
+  it('reads the signed-in Gmail writer from the account control', () => {
+    installDom(gmailInlineReply, 'https://mail.google.com/mail/u/0/#inbox/example');
+    expect(extractGmailWriter(document)).toBe('Yuncheng <me@example.com>');
   });
 
   it('keeps attached files and attached images, and ignores body images', () => {
@@ -112,6 +149,30 @@ describe('gmail-dom', () => {
     `, 'https://mail.google.com/mail/u/0/#inbox?compose=new');
 
     expect(extractGmailCurrentContext(document)).toBeNull();
+  });
+
+  it('strips nested gmail_quote from expanded message bodies', () => {
+    installDom(`
+      <h2 data-thread-perm-id="thread-3">Reloptix</h2>
+      <div role="list">
+        <div role="listitem">
+          <span email="help@reloptix.com">Reloptix</span>
+          <span class="g3" title="Jul 16, 2026, 9:10 AM">Jul 16</span>
+          <div data-message-id="m3">
+            <div class="a3s">
+              Hello there, the white case holds the lenses.
+              <div class="gmail_quote">On Jul 15, haoyun119@gmail.com wrote:<br>Does case refer to storage?</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `, 'https://mail.google.com/mail/u/0/#inbox/example');
+
+    const context = extractGmailCurrentContext(document);
+    expect(context?.messages).toHaveLength(1);
+    expect(context?.messages[0]?.body).toContain('white case holds the lenses');
+    expect(context?.messages[0]?.body).not.toContain('Does case refer');
+    expect(context?.messages[0]?.body).not.toContain('gmail_quote');
   });
 
   it('preserves Gmail signatures and quoted content when applying a draft', () => {
@@ -161,7 +222,7 @@ describe('gmail-dom', () => {
     expect(editor.closest('.aO7') === mount.host).toBe(false);
   });
 
-  it('mounts an inline reply above the editor instead of inside it', () => {
+  it('keeps an inline reply as reply even when a hidden subject input is present', () => {
     installDom(gmailInlineReply, 'https://mail.google.com/mail/u/0/#inbox/example');
     const editor = findGmailComposeEditors(document)[0];
     const mount = getGmailComposeMountForAssistant(editor);

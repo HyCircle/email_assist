@@ -1,3 +1,4 @@
+import { MAX_CONTEXT_MESSAGES } from './constants';
 import type { AssistantMount, ComposeKind, ContextAttachment, ContextItem, EmailMessage } from './types';
 
 function isVisible(element: Element): element is HTMLElement {
@@ -53,7 +54,16 @@ function getGmailComposeRoot(editor: HTMLElement): HTMLElement {
 }
 
 function findGmailSubjectInput(editor: HTMLElement): HTMLInputElement | null {
-  return getGmailComposeRoot(editor).querySelector<HTMLInputElement>('input[name="subjectbox"], input[aria-label="Subject"]');
+  return Array.from(
+    getGmailComposeRoot(editor).querySelectorAll<HTMLInputElement>(
+      'input[name="subjectbox"], input[aria-label="Subject"]',
+    ),
+  ).find(
+    (input) =>
+      !input.closest('[data-email-assist="true"]') &&
+      !input.closest('[hidden], [aria-hidden="true"]') &&
+      isVisible(input),
+  ) ?? null;
 }
 
 function createDraftBlock(documentRef: Document, text: string): HTMLDivElement {
@@ -87,18 +97,75 @@ function isPreservedReplyNode(node: ChildNode): boolean {
   );
 }
 
+function readExpandedBody(bodyNode: HTMLElement): string {
+  const clone = bodyNode.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll('.gmail_quote, .gmail_extra').forEach((node) => node.remove());
+  return normalizeText(clone.innerText || clone.textContent || '');
+}
+
 function toEmailMessage(root: HTMLElement): EmailMessage | null {
   const senderNode = root.querySelector<HTMLElement>('[email]');
   const sender = normalizeText(senderNode?.getAttribute('email') || senderNode?.textContent || '');
+  const dateNode = root.querySelector<HTMLElement>('span.g3');
+  const date = normalizeText(dateNode?.getAttribute('title') || dateNode?.textContent || '');
   const bodyNode = root.querySelector<HTMLElement>('.a3s');
-  const body = normalizeText(bodyNode?.innerText || bodyNode?.textContent || '');
+  const body = bodyNode ? readExpandedBody(bodyNode) : '';
   if (!body) {
     return null;
   }
 
   return {
     sender: sender || 'Unknown sender',
-    date: '',
+    date,
+    body,
+  };
+}
+
+function readCollapsedSnippet(item: HTMLElement, sender: string, date: string): string {
+  const snippetRoot = item.querySelector<HTMLElement>('.adf') ?? item;
+  const lines = normalizeText(snippetRoot.innerText || snippetRoot.textContent || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const senderNode = item.querySelector<HTMLElement>('[email]');
+  const senderLabel = normalizeText(senderNode?.textContent || '');
+  const dateText = normalizeText(item.querySelector<HTMLElement>('span.g3')?.textContent || '');
+  const remainder = [...lines];
+  const first = remainder[0] || '';
+  if (
+    first &&
+    (first === sender ||
+      first === senderLabel ||
+      (sender && first.includes(sender)) ||
+      (senderLabel && (first.includes(senderLabel) || senderLabel.includes(first))))
+  ) {
+    remainder.shift();
+  }
+  const next = remainder[0] || '';
+  if (next && (next === date || next === dateText || (date && date.includes(next)) || (dateText && dateText.includes(next)))) {
+    remainder.shift();
+  }
+
+  return normalizeText(remainder.join('\n'));
+}
+
+function toListItemMessage(item: HTMLElement): EmailMessage | null {
+  const senderNode = item.querySelector<HTMLElement>('[email]');
+  const sender = normalizeText(senderNode?.getAttribute('email') || senderNode?.textContent || '');
+  const dateNode = item.querySelector<HTMLElement>('span.g3');
+  const date = normalizeText(dateNode?.getAttribute('title') || dateNode?.textContent || '');
+  const bodyNode = item.querySelector<HTMLElement>('.a3s');
+  const body = bodyNode
+    ? readExpandedBody(bodyNode)
+    : readCollapsedSnippet(item, sender, date);
+  if (!body) {
+    return null;
+  }
+
+  return {
+    sender: sender || 'Unknown sender',
+    date,
     body,
   };
 }
@@ -287,14 +354,43 @@ export function extractGmailComposeAttachments(editor: HTMLElement): ContextAtta
   return extractGmailAttachments(getGmailComposeRoot(editor));
 }
 
+export function extractGmailWriter(root: Document | HTMLElement = document): string {
+  const doc = root.ownerDocument ?? (root as Document);
+  const account = Array.from(
+    doc.querySelectorAll<HTMLElement>('a[aria-label*="Google Account"], a[aria-label*="Google 账号"]'),
+  ).find((node) => Boolean(node.getAttribute('aria-label')));
+  const label = normalizeText(account?.getAttribute('aria-label') || '');
+  const named = label.match(/Google Account:\s*([^(]+?)\s*\(([^)\s]+@[^)\s]+)\)/i)
+    ?? label.match(/Google 账号[：:]\s*([^(]+?)\s*\(([^)\s]+@[^)\s]+)\)/i);
+  if (named) {
+    const name = normalizeText(named[1] || '');
+    const email = normalizeText(named[2] || '');
+    if (name && email) {
+      return `${name} <${email}>`;
+    }
+    return email || name;
+  }
+
+  const emailOnly = label.match(/\(([^)\s]+@[^)\s]+)\)/);
+  return normalizeText(emailOnly?.[1] || '');
+}
+
 export function extractGmailCurrentContext(root: Document | HTMLElement = document): ContextItem | null {
   const doc = root.ownerDocument ?? (root as Document);
-  const messageRoots = Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).filter(isVisible);
+  const expanded = Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).find(isVisible);
+  const conversation = expanded?.closest<HTMLElement>('[role="list"]');
+  const messageItems = conversation
+    ? Array.from(conversation.querySelectorAll<HTMLElement>(':scope > [role="listitem"]')).filter(isVisible)
+    : [];
+
   const messages: EmailMessage[] = [];
   const seenBodies = new Set<string>();
+  const sourceItems = messageItems.length > 0
+    ? messageItems
+    : Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).filter(isVisible);
 
-  for (const messageRoot of messageRoots) {
-    const message = toEmailMessage(messageRoot);
+  for (const item of sourceItems) {
+    const message = messageItems.length > 0 ? toListItemMessage(item) : toEmailMessage(item);
     if (!message || seenBodies.has(message.body)) {
       continue;
     }
@@ -307,11 +403,17 @@ export function extractGmailCurrentContext(root: Document | HTMLElement = docume
     return null;
   }
 
+  const kept = messages.length > MAX_CONTEXT_MESSAGES
+    ? messages.slice(messages.length - MAX_CONTEXT_MESSAGES)
+    : messages;
   const subject = normalizeText(
     doc.querySelector<HTMLElement>('h2[data-thread-perm-id], main h2')?.textContent ?? '',
   );
-  const participants = Array.from(new Set(messages.map((message) => message.sender).filter(Boolean)));
-  const attachments = messageRoots.flatMap(extractGmailAttachments);
+  const participants = Array.from(new Set(kept.map((message) => message.sender).filter(Boolean)));
+  const attachmentRoots = messageItems.length > 0
+    ? messageItems.flatMap((item) => Array.from(item.querySelectorAll<HTMLElement>('[data-message-id]')))
+    : Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).filter(isVisible);
+  const attachments = (attachmentRoots.length > 0 ? attachmentRoots : sourceItems).flatMap(extractGmailAttachments);
 
   return {
     id: 'gmail:current',
@@ -319,7 +421,7 @@ export function extractGmailCurrentContext(root: Document | HTMLElement = docume
     provider: 'gmail',
     subject,
     participants,
-    messages,
+    messages: kept,
     label: subject || 'Current Gmail thread',
     attachments: attachments.length > 0 ? attachments : undefined,
   };

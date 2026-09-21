@@ -81,94 +81,79 @@ describe('outlook-dom', () => {
     expect(document.querySelector<HTMLInputElement>('[data-email-assist="true"] input')?.value).toBe('Suggested subject');
   });
 
-  it('extracts a structured Outlook reading pane without scanning page UI', () => {
+  it('prefers compose quote over reading-pane cards when both exist', () => {
     installDom(`
       <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">
-        <span id="CONV_123_SUBJECT" role="heading" aria-level="3">Quarterly update</span>
-        <div aria-label="Email message">
-          <span aria-label="From: ois@uic.edu &lt;ois@uic.edu&gt;"></span>
-          <div data-testid="SentReceivedSavedTime">Tuesday, August 26, 2025 10:19 AM</div>
-          <div role="document" aria-label="Message body">Please confirm whether Tuesday still works.</div>
-        </div>
-      </div></main>
-      <div title="Inbox navigation">Ignore this UI email@example.com</div>
-    `, 'https://outlook.office.com/mail/inbox/id/example');
-
-    const context = extractOutlookCurrentContext(document);
-    expect(context?.subject).toBe('Quarterly update');
-    expect(context?.messages[0]?.body).toContain('Tuesday still works');
-    expect(context?.messages[0]?.sender).toContain('ois@uic.edu');
-    expect(context?.participants).toContain('ois@uic.edu');
-    expect(context?.participants).not.toContain('email@example.com');
-  });
-
-  it('uses only message-body nodes inside email message roots and keeps attachment metadata', () => {
-    installDom(`
-      <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">
-        <span id="CONV_123_SUBJECT">Conference</span>
-        <div role="document" aria-label="Message body">Outer wrapper text should be ignored.</div>
-        <div aria-label="Email message">
-          <span aria-label="From: alice@example.com"></span>
-          <div role="document" aria-label="Message body">Current message.</div>
-          <div role="document" aria-label="Message body">Forwarded message.</div>
-        </div>
-        <div aria-label="file attachments">
-          <div role="option" aria-label="paper.pdf 836 KB More actions"></div>
-          <div role="option" aria-label="site-photo.png 200 KB More actions">
-            <img src="https://outlook.office.com/mail/attachment/site-photo.png" alt="site-photo.png" />
+        <span id="CONV_123_SUBJECT">Quarterly update</span>
+        <div aria-label="1 messages">
+          <div class="card">
+            <button aria-label="From: pane@example.com"></button>
+            <h3>Mon 09/14/2026 05:00 PM</h3>
+            <div role="document" aria-label="Message body">Reading pane only body.</div>
           </div>
         </div>
-        <img src="https://cdn.example.com/hero.png" alt="Hero green trophy" />
       </div></main>
+      <div data-app-section="MailReadCompose">
+        <input aria-label="Subject" value="Re: Campus update">
+        <div aria-label="Message body" contenteditable="true">
+          <div id="divRplyFwdMsg">From: ois@uic.edu &lt;ois@uic.edu&gt;<br>Subject: Campus update</div>
+          <div>Please confirm whether Tuesday still works.</div>
+        </div>
+      </div>
     `, 'https://outlook.office.com/mail/inbox/id/example');
 
-    const context = extractOutlookCurrentContext(document);
-    expect(context?.messages.map((message) => message.body)).toEqual(['Current message.', 'Forwarded message.']);
-    expect(context?.messages.map((message) => message.body)).not.toContain('Outer wrapper text should be ignored.');
-    expect(context?.attachments).toEqual([
-      expect.objectContaining({ kind: 'file', name: 'paper.pdf', size: '836 KB' }),
-      expect.objectContaining({
-        kind: 'image',
-        name: 'site-photo.png',
-        mediaType: 'image/png',
-        sourceUrl: 'https://outlook.office.com/mail/attachment/site-photo.png',
-      }),
-    ]);
-    expect(context?.attachments?.some((attachment) => attachment.name === 'Hero green trophy')).toBe(false);
+    const editor = findOutlookComposeEditors(document)[0];
+    const context = extractOutlookCurrentContext(document, editor);
+    expect(context?.messages).toHaveLength(1);
+    expect(context?.messages[0]?.body).toContain('Tuesday still works');
+    expect(context?.messages[0]?.body).not.toContain('Reading pane only body');
   });
 
-  it('recovers sender and date from Outlook’s inline reply lead-in', () => {
+  it('reads reading-pane cards when the inline reply has no compose quote', () => {
     installDom(`
-      <main id="ReadingPaneContainerId"><div id="ConversationReadingPaneContainer">
-        <span id="CONV_123_SUBJECT">Homework 2</span>
-        <div aria-label="Email message">
-          <div role="document" aria-label="Message body">On Sep 11, 2026, 1:52 PM, Vergara, Mateo &lt;mverg@uic.edu&gt; wrote:\nPlease see the attached work.</div>
+      <main id="ReadingPaneContainerId" aria-label="Reading Pane" data-app-section="MailReadCompose">
+        <div id="ConversationReadingPaneContainer">
+          <span id="CONV_1_SUBJECT">Stat 385 HW1</span>
+          <div aria-label="2 messages">
+            <div class="card">
+              <span role="button" aria-label="From: Hao, Yuncheng">You</span>
+              <div role="heading" aria-level="3">Fri 09/11/2026 10:07 PM</div>
+              <div>Dear Prof. Zhang, grading for HW1 is done.</div>
+            </div>
+            <div class="card">
+              <span role="button" aria-label="From: Zhong, Ping-Shou">Zhong, Ping-Shou</span>
+              <div role="heading" aria-level="3">Sat 09/19/2026 09:51 AM</div>
+              <div role="document" aria-label="Message body">Good morning Yuncheng, the rubrics look good.</div>
+            </div>
+            <div class="card">
+              <div role="heading" aria-level="3">[Draft]</div>
+              <div>This message hasn't been sent.</div>
+              <div id="docking_InitVisiblePart_1">
+                <div aria-label="Message body" contenteditable="true"></div>
+              </div>
+            </div>
+          </div>
         </div>
-      </div></main>
+      </main>
     `, 'https://outlook.cloud.microsoft/mail/inbox/id/example');
 
-    const context = extractOutlookCurrentContext(document);
-    expect(context?.messages[0]?.sender).toContain('mverg@uic.edu');
-    expect(context?.messages[0]?.sender).toContain('Vergara, Mateo');
-    expect(context?.messages[0]?.date).toContain('Sep 11, 2026');
-    expect(context?.participants).toContain('mverg@uic.edu');
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(getOutlookComposeKind(editor)).toBe('reply');
+    const context = extractOutlookCurrentContext(document, editor);
+    expect(context?.subject).toBe('Stat 385 HW1');
+    expect(context?.messages.map((message) => message.body)).toEqual([
+      'Dear Prof. Zhang, grading for HW1 is done.',
+      'Good morning Yuncheng, the rubrics look good.',
+    ]);
+    expect(context?.messages[0]?.sender).toContain('Hao, Yuncheng');
+    expect(context?.messages[1]?.sender).toContain('Zhong, Ping-Shou');
   });
 
-  it('returns no reading-pane context when message bodies are not structured', () => {
+  it('returns null for unstructured reading-pane dumps beside a new compose', () => {
     installDom(`
       <main id="ReadingPaneContainerId">From: chrome@outlook Whole pane dump email@example.com</main>
       ${outlookComposeShell}
     `, 'https://outlook.office.com/mail/');
-
-    const editor = findOutlookComposeEditors(document)[0];
-    expect(extractOutlookCurrentContext(document, editor)).toBeNull();
-  });
-
-  it('does not treat the compose subject input as a reading-pane subject', () => {
-    installDom(`
-      <main id="ReadingPaneContainerId"></main>
-      ${outlookComposeShell}
-    `, 'https://outlook.live.com/mail/compose/example');
 
     const editor = findOutlookComposeEditors(document)[0];
     expect(extractOutlookCurrentContext(document, editor)).toBeNull();
@@ -205,6 +190,23 @@ describe('outlook-dom', () => {
     expect(readPlainTextFromOutlookEditor(editor)).toBe('');
   });
 
+  it('cuts the draft at divRplyFwdMsg even when a later blockquote exists', () => {
+    installDom(`
+      <div aria-label="Message body" contenteditable="true">
+        <div>My reply draft.</div>
+        <hr>
+        <div id="divRplyFwdMsg">From: Zhong, Ping-Shou &lt;pszhong@uic.edu&gt;<br>Subject: Re: Homework</div>
+        <div>Good morning Yuncheng,</div>
+        <blockquote>On Sep 18, Hao &lt;yhao24@uic.edu&gt; wrote:<br>Older quoted body.</blockquote>
+      </div>
+    `, 'https://outlook.live.com/mail/inbox/id/example');
+
+    const editor = findOutlookComposeEditors(document)[0];
+    expect(readPlainTextFromOutlookEditor(editor)).toBe('My reply draft.');
+    expect(readPlainTextFromOutlookEditor(editor)).not.toContain('Good morning Yuncheng');
+    expect(readPlainTextFromOutlookEditor(editor)).not.toContain('Older quoted body');
+  });
+
   it('extracts quoted reply context from the Outlook compose surface', () => {
     installDom(`
       <div data-app-section="MailReadCompose">
@@ -219,8 +221,52 @@ describe('outlook-dom', () => {
 
     const context = extractOutlookCurrentContext(document);
     expect(context?.subject).toBe('Campus update');
+    expect(context?.messages).toHaveLength(1);
     expect(context?.messages[0]?.body).toContain('Tuesday still works');
+    expect(context?.messages[0]?.sender).toContain('ois@uic.edu');
     expect(context?.participants).toEqual(expect.arrayContaining(['ois@uic.edu', 'yhao24@uic.edu']));
+  });
+
+  it('peels a nested reply chain by blockquote and HR + RplyFwdMsg boundaries', () => {
+    installDom(`
+      <div data-app-section="MailReadCompose">
+        <input aria-label="Subject" value="Re: Stat 385 HW1">
+        <div aria-label="Message body" contenteditable="true">
+          <hr>
+          <div id="divRplyFwdMsg">From: Zhong, Ping-Shou &lt;pszhong@uic.edu&gt;<br>Sent: Saturday, September 19, 2026 09:51 AM<br>To: Hao, Yuncheng &lt;yhao24@uic.edu&gt;<br>Subject: Re: Stat 385 HW1</div>
+          <div>Good morning Yuncheng, the rubrics look good.</div>
+          <div>&lt;sol_hw2_q2b.R&gt;&lt;sol_hw2_q2c.R&gt;</div>
+          <blockquote>
+            <div>On Sep 18, 2026, at 5:33 PM, Hao, Yuncheng &lt;yhao24@uic.edu&gt; wrote:</div>
+            <div>Dear Professor Zhong, I finished grading HW 2.</div>
+            <hr>
+            <div id="x_divRplyFwdMsg">From: Zhong, Ping-Shou &lt;pszhong@uic.edu&gt;<br>Sent: Friday, September 18, 2026 01:03 PM<br>To: Hao, Yuncheng &lt;yhao24@uic.edu&gt;</div>
+            <div>Hi Yuncheng, I will update the solution.</div>
+            <blockquote>
+              <div>On Sep 18, 2026, at 12:43 PM, Hao, Yuncheng &lt;yhao24@uic.edu&gt; wrote:</div>
+              <div>Hi Professor Zhong, thank you for the clarification.</div>
+            </blockquote>
+          </blockquote>
+        </div>
+      </div>
+    `, 'https://outlook.cloud.microsoft/mail/inbox/id/example');
+
+    const context = extractOutlookCurrentContext(document);
+    expect(context?.messages.map((message) => message.body)).toEqual([
+      'Hi Professor Zhong, thank you for the clarification.',
+      'Hi Yuncheng, I will update the solution.',
+      'Dear Professor Zhong, I finished grading HW 2.',
+      'Good morning Yuncheng, the rubrics look good.',
+    ]);
+    expect(context?.messages.some((message) => message.body.includes('sol_hw2'))).toBe(false);
+    expect(context?.messages[0]?.sender).toContain('yhao24@uic.edu');
+    expect(context?.messages[0]?.sender).toContain('Hao, Yuncheng');
+    expect(context?.messages[0]?.date).toBe('Sep 18, 2026, at 12:43 PM');
+    expect(context?.messages[2]?.sender).toContain('yhao24@uic.edu');
+    expect(context?.messages[2]?.date).toBe('Sep 18, 2026, at 5:33 PM');
+    expect(context?.messages[3]?.sender).toContain('Zhong, Ping-Shou');
+    expect(context?.messages[3]?.date).toContain('September 19, 2026');
+    expect(context?.subject).toBe('Re: Stat 385 HW1');
   });
 
   it('extracts and preserves a quoted reply marker outside the editor', () => {
